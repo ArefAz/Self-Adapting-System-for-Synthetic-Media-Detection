@@ -398,7 +398,7 @@ def train_autoencoder(X_train, y_train, X_val, y_val):
         beta: Weight for discriminative loss.
     """
 
-    num_epochs = 50
+    num_epochs = 20
     alpha = 1.0
     beta = 10.0
     batch_size = 64
@@ -448,6 +448,7 @@ def train_autoencoder(X_train, y_train, X_val, y_val):
             batch_X, labels = X_train[start:end], y_train[start:end]
             
             optimizer.zero_grad()
+            outputs = model(batch_X)
             
             # Forward pass
             loss_reconstruction = reconstruction_loss(outputs, batch_X) * alpha
