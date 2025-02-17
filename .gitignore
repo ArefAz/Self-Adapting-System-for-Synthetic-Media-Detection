@@ -1,4 +1,4 @@
 fsd/
-figures/
-results_dict.csv
+figures*/
+*.csv
 runs/

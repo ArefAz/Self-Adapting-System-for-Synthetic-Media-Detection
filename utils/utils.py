@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import glob
 import numpy as np
 import os
@@ -8,7 +10,10 @@ from .eval_att import *
 from sklearn.metrics import balanced_accuracy_score, accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
+from sklearn.mixture import GaussianMixture
 from torch.utils.tensorboard import SummaryWriter
+
+from copy import deepcopy
 
 
 class DummyModel:
@@ -86,7 +91,9 @@ def get_embeddings(dirs):
 #     return embeddings, np.array(labels)
 
 
-def get_metrics(scores, y_test, max_known_label, initial_n_known, is_rotation=False):
+def get_metrics(
+    scores, y_test, max_known_label, initial_n_known, is_rotation=False, do_print=True
+):
 
     # if is_rotation:
     #     y_test[y_test >= max_known_label] = initial_n_known
@@ -124,13 +131,13 @@ def get_metrics(scores, y_test, max_known_label, initial_n_known, is_rotation=Fa
 
     accuracy = balanced_accuracy_score(y_known, voted_preds_known)
     cm = confusion_matrix(y_known, voted_preds_known)
-    print(
-        np.unique(y_known, return_counts=True)[1],
-        np.unique(voted_preds_known, return_counts=True)[1],
-        sep="\n",
-    )
-    print(cm)
-    # input()
+    if do_print:
+        print(
+            np.unique(y_known, return_counts=True)[1],
+            np.unique(voted_preds_known, return_counts=True)[1],
+            sep="\n",
+        )
+        print(cm)
 
     y_current = y_test[y_test == max_known_label]
     if is_rotation:
@@ -166,11 +173,14 @@ def get_metrics(scores, y_test, max_known_label, initial_n_known, is_rotation=Fa
         y_is_synthetic_current, preds_synthetic_current
     )
 
-    oscr = compute_oscr(
-        scores[y_test <= max_known_label],
-        scores[y_test > max_known_label],
-        y_test[y_test <= max_known_label],
-    )
+    try:
+        oscr = compute_oscr(
+            scores[y_test <= max_known_label],
+            scores[y_test > max_known_label],
+            y_test[y_test <= max_known_label],
+        )
+    except ZeroDivisionError:
+        oscr = 0
 
     # round all metrics to only have 4 decimal places
     auc_crr = round(auc_crr, 4)
@@ -192,7 +202,7 @@ def get_metrics(scores, y_test, max_known_label, initial_n_known, is_rotation=Fa
         "auc_crr": auc_crr,
         "oscr": oscr,
     }
-    lists = {"fpr": fpr, "tpr": tpr, "thresholds": thresholds}
+    lists = {"fpr": fpr, "tpr": tpr, "thresholds": thresholds, "cm": cm}
     return results, lists
 
 
@@ -241,7 +251,7 @@ def online_triplet_mining(embeddings, labels, class_weights=None, margin=1.0):
             )
 
             # Scale loss by the class weight of the anchor
-            loss = loss #* class_weights[anchor_label]
+            loss = loss  # * class_weights[anchor_label]
 
             triplet_loss += loss
 
@@ -260,126 +270,16 @@ def compute_class_weights(y_train):
     return class_weights
 
 
-# def train_autoencoder(X_train, y_train, X_val, y_val):
-
-#     print("==== Training Autoencoder ====")
-
-#     # shuffle the data
-#     X_train, y_train = shuffle(X_train, y_train)
-#     X_val, y_val = shuffle(X_val, y_val)
-
-#     X_train, X_val = torch.tensor(X_train).float(), torch.tensor(X_val).float()
-#     y_train, y_val = torch.tensor(y_train).long(), torch.tensor(y_val).long()
-
-#     # move to cuda
-#     X_train, y_train = X_train.cuda(), y_train.cuda()
-#     X_val, y_val = X_val.cuda(), y_val.cuda()
-
-#     # print unique values with their counts in y_train and y_val
-#     print(np.unique(y_train.cpu().numpy(), return_counts=True))
-#     print(np.unique(y_val.cpu().numpy(), return_counts=True))
-
-#     num_epochs = 20
-#     alpha = 1.0
-#     beta = 100.0
-#     batch_size = 64
-#     lr = 1e-4
-
-#     input_dim, hidden_dim, latent_dim = 640, 640, 640
-#     # Compute class weights as a dictionary
-#     class_weights_dict = compute_class_weights(y_train)
-#     class_weights = (
-#         torch.tensor([class_weights_dict[i] for i in range(len(class_weights_dict))])
-#         .float()
-#         .cuda()
-#     )
-
-#     model = Autoencoder(input_dim, hidden_dim, latent_dim)
-#     model = model.cuda()
-#     reconstruction_loss = torch.nn.L1Loss()
-
-#     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-#     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1, verbose=True)
-
-#     train_loss = []
-#     val_loss = []
-#     train_loss1 = []
-#     train_loss2 = []
-#     val_loss1 = []
-#     val_loss2 = []
-#     train_loss_epoch = 0
-
-#     # Initialize TensorBoard writer
-#     writer = SummaryWriter()
-
-#     for epoch in range(num_epochs):
-#         model.train()
-#         optimizer.zero_grad()
-#         train_loss_epoch = 0
-#         for i in range(0, X_train.size(0), batch_size):
-#             batch_X = X_train[i : i + batch_size]
-#             outputs = model(batch_X)
-#             loss1 = reconstruction_loss(outputs, batch_X) * alpha
-#             loss2 = (
-#                 online_triplet_mining(
-#                     model(batch_X), y_train[i : i + batch_size], class_weights
-#                 )
-#                 * beta
-#             )
-#             loss = loss1 + loss2
-#             loss.backward()
-#             optimizer.step()
-#             train_loss.append(loss.item())
-#             train_loss1.append(loss1.item())
-#             train_loss2.append(loss2.item())
-#             train_loss_epoch += loss.item()
-
-#         model.eval()
-#         with torch.no_grad():
-#             val_loss_epoch = 0
-#             for i in range(0, X_val.size(0), batch_size):
-#                 batch_X = X_val[i : i + batch_size]
-#                 outputs = model(batch_X)
-#                 loss1 = reconstruction_loss(outputs, batch_X) * alpha
-#                 loss2 = (
-#                     online_triplet_mining(
-#                         model(batch_X), y_val[i : i + batch_size], class_weights
-#                     )
-#                     * beta
-#                 )
-#                 loss = loss1 + loss2
-#                 val_loss_epoch += loss.item()
-#                 val_loss1.append(loss1.item())
-#                 if isinstance(loss2, torch.Tensor):
-#                     val_loss2.append(loss2.item())
-#                 else:
-#                     val_loss2.append(loss2)
-#             val_loss.append(val_loss_epoch / (X_val.size(0) // batch_size))
-
-#         scheduler.step(val_loss[-1])
-
-#         # Log metrics to TensorBoard
-#         writer.add_scalar('Loss/train', train_loss_epoch / (X_train.size(0) // batch_size), epoch)
-#         writer.add_scalar('Loss/val', val_loss[-1], epoch)
-#         writer.add_scalar('Loss1/train', train_loss1[-1], epoch)
-#         writer.add_scalar('Loss2/train', train_loss2[-1], epoch)
-#         writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'], epoch)
-
-#         print(
-#             f"Epoch {epoch+1}/{num_epochs}, loss_epoch = {train_loss_epoch / (X_train.size(0) // batch_size):.4f},\
-#             Loss1: {train_loss1[-1]:.4f}, Loss2: {train_loss2[-1]:.4f}, Val Loss: {val_loss[-1]:.4f}, lr: {optimizer.param_groups[0]['lr']}"
-#         )
-
-#     writer.close()
-#     return model.cpu().eval()
-
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
-
-def train_autoencoder(X_train, y_train, X_val, y_val):
+def train_autoencoder(
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    source_name,
+    max_known_label,
+    initial_n_known,
+    kwargs,
+):
     """
     Trains an autoencoder using in-memory datasets with weighted loss terms.
 
@@ -397,19 +297,26 @@ def train_autoencoder(X_train, y_train, X_val, y_val):
         alpha: Weight for L1 reconstruction loss.
         beta: Weight for discriminative loss.
     """
-
     num_epochs = 20
     alpha = 1.0
-    beta = 10.0
+    beta = 100.0
     batch_size = 64
     lr = 1e-4
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    num_epochs = kwargs.get("num_epochs", num_epochs)
+    alpha = kwargs.get("alpha", alpha)
+    beta = kwargs.get("beta", beta)
+    batch_size = kwargs.get("batch_size", batch_size)
+    lr = kwargs.get("lr", lr)
+    pl_patience = kwargs.get("pl_patience", 1)
+    es_patience = kwargs.get("es_patience", 10)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Move model and data to device
     input_dim, hidden_dim, latent_dim = 640, 640, 640
     model = Autoencoder(input_dim, hidden_dim, latent_dim)
     model = model.to(device)
-    X_train = torch.tensor(X_train).float().to(device)
 
     # shuffle the data
     # X_train, y_train = shuffle(X_train, y_train)
@@ -424,96 +331,160 @@ def train_autoencoder(X_train, y_train, X_val, y_val):
     # Loss function and optimizer
     reconstruction_loss = nn.L1Loss()
     discriminative_loss_fn = online_triplet_mining
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    
-    # Learning rate scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=0, verbose=True)
-    
-    # TensorBoard writer
-    writer = SummaryWriter()
+    optimizer = optim.AdamW(model.parameters(), lr=lr)
 
-    batch_size = 64  # Set batch size manually
+    # Learning rate scheduler
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=pl_patience, verbose=True
+    )
+
+    # TensorBoard writer
+    writer = SummaryWriter(log_dir=f"runs/{source_name}")
+
+    # Early stopping parameters
+    best_val_loss = float("inf")
+    early_stop_counter = 0
+
     num_train_batches = (len(X_train) + batch_size - 1) // batch_size
     num_val_batches = (len(X_val) + batch_size - 1) // batch_size
+    best_accuracy = 0.0
 
     for epoch in range(num_epochs):
-        # Training phase
-        model.train()
-        train_recon_loss = 0.0
-        train_disc_loss = 0.0
-        total_train_loss = 0.0
-        
-        for i in range(num_train_batches):
-            start, end = i * batch_size, (i + 1) * batch_size
-            batch_X, labels = X_train[start:end], y_train[start:end]
-            
-            optimizer.zero_grad()
-            outputs = model(batch_X)
-            
-            # Forward pass
-            loss_reconstruction = reconstruction_loss(outputs, batch_X) * alpha
-            loss_discriminative = online_triplet_mining(outputs, labels) * beta
-            
-            loss = alpha * loss_reconstruction + beta * loss_discriminative
-            loss = alpha * loss_reconstruction + beta * loss_discriminative
-            
-            # Backpropagation
-            loss.backward()
-            optimizer.step()
-            
-            # Track losses
-            train_recon_loss += loss_reconstruction.item()
-            train_disc_loss += loss_discriminative.item()
-            total_train_loss += loss.item()
-        
-        # Compute average training losses
-        train_recon_loss /= num_train_batches
-        train_disc_loss /= num_train_batches
-        total_train_loss /= num_train_batches
-
         # Validation phase
         model.eval()
         val_recon_loss = 0.0
         val_disc_loss = 0.0
         total_val_loss = 0.0
-        
+
         with torch.no_grad():
             for i in range(num_val_batches):
                 start, end = i * batch_size, (i + 1) * batch_size
                 batch_X, labels = X_val[start:end], y_val[start:end]
-                
+
                 outputs = model(batch_X)
-                
-                # loss_reconstruction = reconstruction_loss(reconstructed, batch_X)
-                # loss_discriminative = discriminative_loss_fn(embeddings, labels)
 
                 loss_reconstruction = reconstruction_loss(outputs, batch_X) * alpha
-                loss_discriminative = online_triplet_mining(outputs, labels) * beta
+                loss_discriminative = discriminative_loss_fn(outputs, labels) * beta
 
-                loss = alpha * loss_reconstruction + beta * loss_discriminative
-                
+                loss = loss_reconstruction + loss_discriminative
+
                 val_recon_loss += loss_reconstruction.item()
-                val_disc_loss += loss_discriminative.item()
+                if loss_discriminative > 0 and isinstance(
+                    loss_discriminative, torch.Tensor
+                ):
+                    val_disc_loss += loss_discriminative.item()
                 total_val_loss += loss.item()
-        
+
+            X_train_transformed = model(X_train).detach().cpu().numpy()
+            X_val_transformed = model(X_val).detach().cpu().numpy()
+
+        gmms = {}
+        y_train_np = y_train.cpu().numpy()
+        y_val_np = y_val.cpu().numpy()
+        for label in np.unique(y_train_np):
+            X_train_transformed_label = X_train_transformed[y_train_np == label]
+            gmm_model = GaussianMixture(n_components=5, covariance_type="full")
+            gmm_model.fit(X_train_transformed_label)
+            gmms[label] = gmm_model
+
+        scores = np.zeros((X_val_transformed.shape[0], len(gmms)))
+        for i, key in enumerate(gmms):
+            gmm_model = gmms[key]
+            scores[:, i] = gmm_model.score_samples(X_val_transformed)
+
+        preds = np.argmax(scores, axis=1)
+        # cm = confusion_matrix(y_val_np, preds)
+        # print(cm)
+
+        results = {}
+        accuracy = np.mean(preds == y_val_np)
+        y_is_synthetic = (y_val_np > 0).astype(int)
+        preds_synthetic = (preds > 0).astype(int)
+        acc_synthetic = np.mean(y_is_synthetic == preds_synthetic)
+        results["acc"] = accuracy
+        results["acc_syn"] = acc_synthetic
+        for key, value in results.items():
+            writer.add_scalar(f"Metrics/{key}", value, epoch)
+
         # Compute average validation losses
         val_recon_loss /= num_val_batches
         val_disc_loss /= num_val_batches
         total_val_loss /= num_val_batches
 
-        # Adjust learning rate if validation loss plateaus
+        # Training phase
+        model.train()
+        train_recon_loss = 0.0
+        train_disc_loss = 0.0
+        total_train_loss = 0.0
 
+        for i in range(num_train_batches):
+            start, end = i * batch_size, (i + 1) * batch_size
+            batch_X, labels = X_train[start:end], y_train[start:end]
+
+            optimizer.zero_grad()
+            outputs = model(batch_X)
+
+            # Forward pass
+            loss_reconstruction = reconstruction_loss(outputs, batch_X) * alpha
+            loss_discriminative = discriminative_loss_fn(outputs, labels) * beta
+
+            loss = loss_reconstruction + loss_discriminative
+
+            # Backpropagation
+            loss.backward()
+            optimizer.step()
+
+            # Track losses
+            train_recon_loss += loss_reconstruction.item()
+            if loss_discriminative > 0 and isinstance(
+                loss_discriminative, torch.Tensor
+            ):
+                train_disc_loss += loss_discriminative.item()
+            total_train_loss += loss.item()
+
+        # Compute average training losses
+        train_recon_loss /= num_train_batches
+        train_disc_loss /= num_train_batches
+        total_train_loss /= num_train_batches
+
+        # Adjust learning rate if validation loss plateaus
         scheduler.step(total_val_loss)
         # Log losses to TensorBoard
-        writer.add_scalar('Loss/Train_Recon', train_recon_loss, epoch)
-        writer.add_scalar('Loss/Train_Discriminative', train_disc_loss, epoch)
-        writer.add_scalar('Loss/Train_Total', total_train_loss, epoch)
-        writer.add_scalar('Loss/Val_Recon', val_recon_loss, epoch)
-        writer.add_scalar('Loss/Val_Discriminative', val_disc_loss, epoch)
-        writer.add_scalar('Loss/Val_Total', total_val_loss, epoch)
+        writer.add_scalar("Loss/Train_Recon", train_recon_loss, epoch)
+        writer.add_scalar("Loss/Train_Discriminative", train_disc_loss, epoch)
+        writer.add_scalar("Loss/Train_Total", total_train_loss, epoch)
+        writer.add_scalar("Loss/Val_Recon", val_recon_loss, epoch)
+        writer.add_scalar("Loss/Val_Discriminative", val_disc_loss, epoch)
+        writer.add_scalar("Loss/Val_Total", total_val_loss, epoch)
+        writer.add_scalar("Learning_Rate", optimizer.param_groups[0]["lr"], epoch)
 
         # Print progress
-        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {total_train_loss:.4f}, Val Loss: {total_val_loss:.4f}")
+        print(
+            f"Epoch [{epoch+1}/{num_epochs}] - Train Loss1: {train_recon_loss:.4f}, Train Loss2: {train_disc_loss:.4f}, Train TLoss: {total_train_loss:.4f}",
+            end="",
+        )
+        print(
+            f", Val Loss1: {val_recon_loss:.4f}, Val Loss2: {val_disc_loss:.4f}, Val TLoss: {total_val_loss:.4f}, Accuracy: {accuracy:.4f}, Detection Acc: {acc_synthetic:.4f}"
+        )
+
+        # Early stopping logic
+        val_loss_margin = 0.01
+        if total_val_loss < best_val_loss:
+            best_val_loss = total_val_loss
+            best_accuracy = accuracy
+            best_detected_accuracy = acc_synthetic
+            best_epoch = epoch
+            early_stop_counter = 0  # Reset counter
+            best_model = deepcopy(model)
+        else:
+            early_stop_counter += 1
+
+        if early_stop_counter >= es_patience:
+            print(
+                f"Early stopping triggered after {epoch+1} epochs at epoch {best_epoch+1} ", end=""
+            )
+            print(f"with validation loss: {best_val_loss:.4f} and accuracy: {best_accuracy:.4f}, detection accuracy: {best_detected_accuracy:.4f}")
+            return best_model.eval().cpu()
 
     # Close TensorBoard writer
     writer.close()

@@ -29,21 +29,33 @@ from sklearn.manifold import TSNE
 from utils import *
 from config import *
 import pandas as pd
+import warnings
+
+warnings.simplefilter("ignore")  # Ignore all warnings
 
 np.random.seed(42)
 random.seed(42)
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
-transformation = Autoencoder(640, 640, 640)
-transformation.load_state_dict(torch.load("autoencoder.pth"))
-transformation.eval()
+
+def refine_cluster(selected_cluster_points, labels, gmms, threshold, factor=1.2):
+    scores_emerging = np.zeros((selected_cluster_points.shape[0], initial_n_known))
+    for i, key in enumerate(gmms):
+        model = gmms[key]
+        scores_emerging[:, i] = model.score_samples(selected_cluster_points)
+    outlier_scores = np.max(scores_emerging, axis=1)
+    negated_outlier_scores = -outlier_scores
+    ood_decisions = (negated_outlier_scores >= threshold * factor).astype(int)
+    prev_size = selected_cluster_points.shape[0]
+    refined_cluster_points = selected_cluster_points[ood_decisions == 1]
+    refined_cluster_labels = labels[ood_decisions == 1]
+    new_size = refined_cluster_points.shape[0]
+    print(f"Refined cluster size: {prev_size} -> {new_size}")
+    return refined_cluster_points, refined_cluster_labels
+
 
 X_train, X_test, y_train, y_test = get_datasets(data_sources, prefix=prefix)
-if FixedTransform:
-    with torch.no_grad():
-        X_train = transformation(torch.tensor(X_train)).numpy()
-        X_test = transformation(torch.tensor(X_test)).numpy()
 
 print(f"labels_count = {np.unique(y_train, return_counts=True)}", end=" ")
 print(np.unique(y_test, return_counts=True))
@@ -59,7 +71,7 @@ print()
 
 for label in unique_labels:
     # random_indices = np.random.choice(len(X_train[y_train == label]), 250, replace=False)
-    X_train_label = X_train[y_train == label][:250]
+    X_train_label = X_train[y_train == label]
     print(f"X_train_label: {X_train_label.shape}, {label}, {data_sources[label]}")
     gmm_model = GaussianMixture(n_components=5, covariance_type="full")
     gmm_model.fit(X_train_label)
@@ -93,12 +105,28 @@ balanced_acc = 0.5 * (tp / (tp + fn) + tn / (tn + fp))
 print(f"Accuracy of OOD detection: {acc:.4f}")
 print(f"TPR: {tpr:.4f}")
 print(f"FPR: {fpr:.4f}")
-results["ood_b_acc"] = round(balanced_acc, 4)
+# results["ood_b_acc"] = round(balanced_acc, 4)
 results["ood_acc"] = round(acc, 4)
 results["ood_tpr"] = round(tpr, 4)
 results["ood_fpr"] = round(fpr, 4)
 results_dict = {"initial": results}
 print(f"initial: {results_dict['initial']}")
+
+# plot the initial data with the true labels
+tsne = TSNE(n_components=2)
+X_test_init = X_test[y_test < initial_n_known]
+y_test_init = y_test[y_test < initial_n_known]
+X_tsne_init = tsne.fit_transform(X_test_init)
+fig, ax = plt.subplots(1, figsize=(6, 6))
+ax.set_xlabel("TSNE component 1")
+ax.set_ylabel("TSNE component 2")
+ax.set_title("Initial data")
+sns.scatterplot(
+    x=X_tsne_init[:, 0], y=X_tsne_init[:, 1], hue=y_test_init, palette="tab10", s=25, ax=ax
+)
+plt.legend()
+plt.tight_layout()
+plt.savefig("figures/0_initial_data.png")
 
 for k in range(initial_n_known, len(data_sources) - 1):
     current_models = deepcopy(initial_models)
@@ -114,14 +142,14 @@ for k in range(initial_n_known, len(data_sources) - 1):
         y_train[y_train == k][:RANDOM_SAMPLES_SIZE],
     )
 
-    print(f"X_emerging: {X_emerging.shape}, y_emerging: {y_emerging.shape}")
 
     X_test_known = X_test[y_test < initial_n_known]
     y_test_known = y_test[y_test < initial_n_known]
-    samples_size = RANDOM_SAMPLES_SIZE  # if len(X_test_known) > RANDOM_SAMPLES_SIZE else len(X_test_known)
+    samples_size = RANDOM_SAMPLES_SIZE  if len(X_test_known) > RANDOM_SAMPLES_SIZE else len(X_test_known)
     random_indices = np.random.choice(len(X_test_known), samples_size, replace=False)
     X_emerging = np.concatenate([X_emerging, X_test_known[random_indices]])
     y_emerging = np.concatenate([y_emerging, y_test_known[random_indices]])
+    print(f"X_emerging: {X_emerging.shape}, y_emerging: {y_emerging.shape}")
 
     # if FixedTransform:
     #     with torch.no_grad():
@@ -158,7 +186,8 @@ for k in range(initial_n_known, len(data_sources) - 1):
     predicted_odd_data = X_emerging[ood_decisions == 1]
     ood_data_true_labels = y_emerging[ood_decisions == 1]
     pca = PCA(n_components=2)
-    X_pca = pca.fit_transform(predicted_odd_data)
+    tsne = TSNE(n_components=2)
+    X_pca = tsne.fit_transform(predicted_odd_data)
 
     selected_cluster = None
 
@@ -215,7 +244,7 @@ for k in range(initial_n_known, len(data_sources) - 1):
         if len(cluster_variances_below_threshold) > 0:
             # iteratively find the next smallest variance cluster and check if it is above the size threshold
             for i, v in cluster_variances_below_threshold:
-                if cluster_sizes[i] > adapted_size_threshold:
+                if cluster_sizes[i] >= adapted_size_threshold:
                     selected_cluster = i
                     break
             if selected_cluster is not None:
@@ -242,7 +271,7 @@ for k in range(initial_n_known, len(data_sources) - 1):
         results, lists = get_metrics(
             scores, y_test, max_known_label, initial_n_known, is_rotation=True
         )
-        results["ood_b_acc"] = round(balanced_acc, 4)
+        # results["ood_b_acc"] = round(balanced_acc, 4)
         results["ood_acc"] = round(acc, 4)
         results["ood_tpr"] = round(tpr, 4)
         results["ood_fpr"] = round(fpr, 4)
@@ -288,10 +317,52 @@ for k in range(initial_n_known, len(data_sources) - 1):
     selected_cluster_points = predicted_odd_data[selected_cluster_mask]
     selected_cluster_labels = ood_data_true_labels[selected_cluster_mask]
     selected_cluster_size = len(selected_cluster_points)
+    refined_cluster_points, refined_cluster_labels = refine_cluster(
+        selected_cluster_points,
+        selected_cluster_labels,
+        current_models,
+        best_threshold,
+        factor=refine_factor,
+    )
+
+    # print(f"Selected cluster size: {selected_cluster_size}")
+    # print(f"selected cluster labels shape: {selected_cluster_labels.shape}")
+    # print(f"Refined cluster size: {refined_cluster_points.shape[0]}")
+    # exit()
+    # plot the selected cluster with the true labels
+    pca = PCA(n_components=2)
+    tsne = TSNE(n_components=2)
+    X_pca_refined = tsne.fit_transform(refined_cluster_points)
+    X_pca_selected = tsne.fit_transform(selected_cluster_points)
+    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+    ax[0].set_xlabel("PCA component 1")
+    ax[0].set_ylabel("PCA component 2")
+    ax[0].set_title(f"Refined cluster")
+    ax[1].set_xlabel("PCA component 1")
+    ax[1].set_ylabel("PCA component 2")
+    ax[1].set_title(f"True labels for emerging source {emerging_source}")
+    sns.scatterplot(
+        x=X_pca_refined[:, 0],
+        y=X_pca_refined[:, 1],
+        hue=refined_cluster_labels,
+        palette="tab10",
+        s=25,
+        ax=ax[0],
+    )
+    sns.scatterplot(
+        x=X_pca_selected[:, 0],
+        y=X_pca_selected[:, 1],
+        hue=selected_cluster_labels,
+        palette="tab10",
+        s=25,
+        ax=ax[1],
+    )
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"figures/{k}_{data_sources[k]}_selected_cluster_refined.png")
 
     new_label = initial_n_known
-    unique_labels = [0, 1, 2, 3, 4, 5]
-    print(unique_labels)
+    unique_labels = [0, 1, 2, 3, 4]
     max_known_label += 1
     X_train_ae = np.concatenate(
         [X_train[y_train < initial_n_known], selected_cluster_points]
@@ -316,8 +387,23 @@ for k in range(initial_n_known, len(data_sources) - 1):
     print(
         f"X_train_ae: {X_train_ae.shape}, y_train_ae: {y_train_ae.shape}, X_val_ae: {X_val_ae.shape}, y_val_ae: {y_val_ae.shape}"
     )
+    print(f"new_label: {new_label}")
+    print(f"unique labels train: {np.unique(y_train_ae, return_counts=True)}")
+    print(f"unique labels val: {np.unique(y_val_ae, return_counts=True)}")
 
-    auto_encoder = train_autoencoder(X_train_ae, y_train_ae, X_val_ae, y_val_ae)
+    if use_autoencoder:
+        auto_encoder = train_autoencoder(
+            X_train_ae,
+            y_train_ae,
+            X_val_ae,
+            y_val_ae,
+            data_sources[k],
+            max_known_label,
+            initial_n_known,
+            kwargs=training_kwargs,
+        )
+    else:
+        auto_encoder = torch.nn.Identity()
 
     # Plot the selected cluster
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))
@@ -344,13 +430,14 @@ for k in range(initial_n_known, len(data_sources) - 1):
 
     # Transform all data into the new embedding space using the learned auto_encoder
     with torch.no_grad():
-        X_train_ae_transformed = auto_encoder(torch.tensor(X_train_ae)).numpy()
-        X_test_transformed = auto_encoder(torch.tensor(X_test)).numpy()
+        X_train_ae_transformed = auto_encoder(torch.tensor(X_train_ae)).numpy() if use_autoencoder else X_train_ae
+        X_test_transformed = auto_encoder(torch.tensor(X_test)).numpy() if use_autoencoder else X_test
 
     # plot X_train_ae before and after transformation on the same figure
     pca = PCA(n_components=2)
-    X_train_ae_pca = pca.fit_transform(X_train_ae)
-    X_train_ae_transformed_pca = pca.fit_transform(X_train_ae_transformed)
+    tsne = TSNE(n_components=2, )
+    X_train_ae_pca = tsne.fit_transform(X_train_ae)
+    X_train_ae_transformed_pca = tsne.fit_transform(X_train_ae_transformed)
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))
     ax[0].set_xlabel("PCA component 1")
     ax[0].set_ylabel("PCA component 2")
@@ -377,7 +464,6 @@ for k in range(initial_n_known, len(data_sources) - 1):
     plt.legend()
     plt.tight_layout()
     plt.savefig(f"figures/{k}_{data_sources[k]}_X_train_ae_transformed.png")
-
 
     # Recreate GMMs with the transformed data
     new_models = {}
@@ -410,14 +496,27 @@ for k in range(initial_n_known, len(data_sources) - 1):
     #     scores[:, i] = model.score_samples(X_test)
 
     results, lists = get_metrics(
-        scores, y_test, max_known_label, initial_n_known, is_rotation=True
+        scores,
+        y_test,
+        max_known_label,
+        initial_n_known,
+        is_rotation=True,
     )
-    results["ood_b_acc"] = round(balanced_acc, 4)
+    # results["ood_b_acc"] = round(balanced_acc, 4)
     results["ood_acc"] = round(acc, 4)
     results["ood_tpr"] = round(tpr, 4)
     results["ood_fpr"] = round(fpr, 4)
     new_key = k
     results_dict[data_sources[k]] = results
+    cm = lists["cm"]
+
+    # plot the confusion matrix
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.title(f"Confusion matrix for emerging source {emerging_source}")
+    plt.savefig(f"figures/{k}_{data_sources[k]}_confusion_matrix.png")
 
     # Convert results_dict to a DataFrame and save it to a CSV file
     results_df = pd.DataFrame(results_dict)
