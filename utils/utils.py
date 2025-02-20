@@ -10,7 +10,7 @@ from .eval_att import *
 from sklearn.metrics import balanced_accuracy_score, accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from torch.utils.tensorboard import SummaryWriter
 
 from copy import deepcopy
@@ -31,13 +31,13 @@ class Autoencoder(torch.nn.Module):
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(input_dim, hidden_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(input_dim, hidden_dim),
+            torch.nn.Linear(hidden_dim, latent_dim),
             torch.nn.ReLU(),
         )
         self.decoder = torch.nn.Sequential(
             torch.nn.Linear(latent_dim, hidden_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(latent_dim, hidden_dim),
+            torch.nn.Linear(hidden_dim, hidden_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim, input_dim),
         )
@@ -68,27 +68,6 @@ def get_embeddings(dirs):
     embeddings = torch.stack(embeddings).squeeze(1)
     embeddings = embeddings.view(embeddings.size(0), -1)
     return np.array(embeddings), np.array(labels)
-
-
-# adapted for transformed FSDs
-# def get_embeddings(dirs):
-#     if isinstance(dirs, str):
-#         dirs = [dirs]
-#     model_paths = []
-#     labels = []
-#     for dir, label in dirs:
-#         model_path_list = [
-#             p for p in glob.glob(f"{dir}/*.pth") if os.path.getsize(p) > 0
-#         ]
-#         model_paths += model_path_list
-#         labels += [label] * len(model_path_list)
-#     embeddings = []
-#     for path in model_paths:
-#         embedding = torch.load(path, map_location="cpu", weights_only=True)
-#         embeddings.append(embedding)
-#     embeddings = torch.stack(embeddings).squeeze(1)
-#     embeddings = embeddings.view(embeddings.size(0), -1)
-#     return embeddings, np.array(labels)
 
 
 def get_metrics(
@@ -217,47 +196,6 @@ def get_datasets(source_list, prefix):
     return X_train, X_test, y_train, y_test
 
 
-def online_triplet_mining(embeddings, labels, class_weights=None, margin=1.0):
-    batch_size = embeddings.size(0)
-    triplet_loss = 0.0
-
-    for i in range(batch_size):
-        anchor = embeddings[i]
-        anchor_label = labels[i]
-
-        # Find positives (same class) excluding the anchor itself
-        positive_mask = (labels == anchor_label) & (
-            torch.arange(batch_size).cuda() != i
-        )
-        positives = embeddings[positive_mask]
-
-        # Find negatives (different class)
-        negative_mask = labels != anchor_label
-        negatives = embeddings[negative_mask]
-
-        if positives.size(0) > 0 and negatives.size(0) > 0:
-            # Pick the hardest positive and hardest negative
-            positive_distances = torch.norm(positives - anchor, dim=1)
-            hardest_positive = positives[torch.argmin(positive_distances)]
-
-            negative_distances = torch.norm(negatives - anchor, dim=1)
-            hardest_negative = negatives[torch.argmin(negative_distances)]
-
-            # Compute the triplet loss for this anchor
-            loss = F.relu(
-                torch.norm(anchor - hardest_positive, p=2) ** 2
-                - torch.norm(anchor - hardest_negative, p=2) ** 2
-                + margin
-            )
-
-            # Scale loss by the class weight of the anchor
-            loss = loss  # * class_weights[anchor_label]
-
-            triplet_loss += loss
-
-    return triplet_loss / batch_size
-
-
 def compute_class_weights(y_train):
     unique_classes, counts = np.unique(y_train.cpu().numpy(), return_counts=True)
     total_samples = len(y_train)
@@ -270,15 +208,97 @@ def compute_class_weights(y_train):
     return class_weights
 
 
+# class OnlineTripletLoss(nn.Module):
+#     def __init__(self, margin=1.0, num_hard=1):
+#         """
+#         Args:
+#             margin: Triplet loss margin.
+#             num_hard: Number of hardest positives and negatives to consider.
+#         """
+#         super(OnlineTripletLoss, self).__init__()
+#         self.margin = margin
+#         self.num_hard = num_hard
+
+#     def forward(self, embeddings, labels):
+#         distances = torch.cdist(embeddings, embeddings, p=2)
+#         batch_size = embeddings.shape[0]
+#         loss = 0.0
+#         valid_triplets = 0
+#         r = torch.arange(batch_size).to(embeddings.device)
+#         for i in range(batch_size):
+#             anchor_label = labels[i]
+#             anchor_dist = distances[i]
+
+#             # Find positive and negative samples
+#             positive_mask = (labels == anchor_label) & (r != i)
+#             negative_mask = labels != anchor_label
+
+#             positive_distances = anchor_dist[positive_mask]
+#             negative_distances = anchor_dist[negative_mask]
+
+#             if len(positive_distances) < self.num_hard or len(negative_distances) < self.num_hard:
+#                 continue  # Skip if not enough hard positives or negatives
+
+#             # Select hardest positives (farthest)
+#             hard_positives = torch.topk(positive_distances, self.num_hard, largest=True).values
+#             # Select hardest negatives (closest)
+#             hard_negatives = torch.topk(negative_distances, self.num_hard, largest=False).values
+
+#             # Compute triplet loss
+#             triplet_loss = F.relu(hard_positives.mean() - hard_negatives.mean() + self.margin)
+#             loss += triplet_loss
+#             valid_triplets += 1
+
+#         return loss / valid_triplets if valid_triplets > 0 else torch.tensor(0.0, device=embeddings.device)
+
+
+class OnlineTripletLoss(nn.Module):
+    def __init__(self, margin=1.0, num_hard=1):
+        super(OnlineTripletLoss, self).__init__()
+        self.margin = margin
+        self.num_hard = num_hard
+
+    def forward(self, embeddings, labels):
+        distances = torch.cdist(embeddings, embeddings, p=2)  # Compute all pairwise distances
+        batch_size = embeddings.shape[0]
+
+        # Masks for positive and negative pairs
+        labels = labels.unsqueeze(1)
+        positive_mask = (labels == labels.T) & ~torch.eye(batch_size, device=labels.device, dtype=torch.bool)
+        negative_mask = labels != labels.T
+
+        # Extract distances for all positive and negative pairs
+        positive_distances = distances[positive_mask].view(-1)  # Flatten for indexing
+        negative_distances = distances[negative_mask].view(-1)  # Flatten for indexing
+
+        # Ensure we have enough positives and negatives
+        k_positive = min(self.num_hard, positive_distances.shape[0])
+        k_negative = min(self.num_hard, negative_distances.shape[0])
+
+        # Check for available triplet pairs
+        if k_positive == 0 or k_negative == 0:
+            return torch.tensor(0.0, device=embeddings.device)  # Return zero loss if no valid triplets
+
+        # Select the hardest positives and negatives
+        hard_positives = torch.topk(positive_distances, k_positive, largest=True).values.mean()
+        hard_negatives = torch.topk(negative_distances, k_negative, largest=False).values.mean()
+        # print(f"{positive_distances.mean().item():.4f}", f"{negative_distances.mean().item():.4f}", f"{hard_positives.item():.4f}", f"{hard_negatives.item():.4f}")
+
+        # Compute loss and return mean over batch
+        triplet_loss = F.relu(hard_positives - hard_negatives + self.margin)
+        return triplet_loss
+
+
 def train_autoencoder(
     X_train,
     y_train,
     X_val,
     y_val,
     source_name,
-    max_known_label,
-    initial_n_known,
-    kwargs,
+    pretrained_model=None,
+    max_known_label=None,
+    initial_n_known=None,
+    kwargs=None,
 ):
     """
     Trains an autoencoder using in-memory datasets with weighted loss terms.
@@ -302,6 +322,7 @@ def train_autoencoder(
     beta = 100.0
     batch_size = 64
     lr = 1e-4
+    top_k = 1
 
     num_epochs = kwargs.get("num_epochs", num_epochs)
     alpha = kwargs.get("alpha", alpha)
@@ -310,12 +331,22 @@ def train_autoencoder(
     lr = kwargs.get("lr", lr)
     pl_patience = kwargs.get("pl_patience", 1)
     es_patience = kwargs.get("es_patience", 10)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    top_k = kwargs.get("top_k", top_k)
+    weight_decay = kwargs.get("weight_decay", 1e-1)
+    device = torch.device(kwargs.get("device", "cuda"))
+    n_components = kwargs.get("n_components", 3)
+    cov_type = kwargs.get("cov_type", "full")
 
     # Move model and data to device
     input_dim, hidden_dim, latent_dim = 640, 640, 640
-    model = Autoencoder(input_dim, hidden_dim, latent_dim)
+    if pretrained_model is None:
+        model = Autoencoder(input_dim, hidden_dim, latent_dim)
+    else:
+        model = pretrained_model
+        lr = lr * kwargs.get("ft_lr_factor", 1.0)
+
+    print(f"Model numel: {sum(p.numel() for p in model.parameters())}")
+
     model = model.to(device)
 
     # shuffle the data
@@ -330,8 +361,8 @@ def train_autoencoder(
 
     # Loss function and optimizer
     reconstruction_loss = nn.L1Loss()
-    discriminative_loss_fn = online_triplet_mining
-    optimizer = optim.AdamW(model.parameters(), lr=lr)
+    discriminative_loss_fn = OnlineTripletLoss(margin=1.0, num_hard=top_k)
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     # Learning rate scheduler
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -348,12 +379,14 @@ def train_autoencoder(
     num_train_batches = (len(X_train) + batch_size - 1) // batch_size
     num_val_batches = (len(X_val) + batch_size - 1) // batch_size
     best_accuracy = 0.0
+    import time
 
     for epoch in range(num_epochs):
+        t0 = time.perf_counter()
         # Validation phase
         model.eval()
-        val_recon_loss = 0.0
-        val_disc_loss = 0.0
+        recon_val_loss = 0.0
+        disc_val_loss = 0.0
         total_val_loss = 0.0
 
         with torch.no_grad():
@@ -364,15 +397,22 @@ def train_autoencoder(
                 outputs = model(batch_X)
 
                 loss_reconstruction = reconstruction_loss(outputs, batch_X) * alpha
-                loss_discriminative = discriminative_loss_fn(outputs, labels) * beta
+                # loss_discriminative = discriminative_loss_fn(outputs, labels, top_k=top_k) * beta
+                loss_discriminative = (
+                    discriminative_loss_fn(
+                        outputs,
+                        labels,
+                    )
+                    * beta
+                )
 
                 loss = loss_reconstruction + loss_discriminative
 
-                val_recon_loss += loss_reconstruction.item()
+                recon_val_loss += loss_reconstruction.item()
                 if loss_discriminative > 0 and isinstance(
                     loss_discriminative, torch.Tensor
                 ):
-                    val_disc_loss += loss_discriminative.item()
+                    disc_val_loss += loss_discriminative.item()
                 total_val_loss += loss.item()
 
             X_train_transformed = model(X_train).detach().cpu().numpy()
@@ -383,7 +423,12 @@ def train_autoencoder(
         y_val_np = y_val.cpu().numpy()
         for label in np.unique(y_train_np):
             X_train_transformed_label = X_train_transformed[y_train_np == label]
-            gmm_model = GaussianMixture(n_components=5, covariance_type="full")
+            gmm_model = BayesianGaussianMixture(
+                # n_components=n_components,
+                n_components=1,
+                # covariance_type=cov_type,
+                covariance_type='spherical',
+            )
             gmm_model.fit(X_train_transformed_label)
             gmms[label] = gmm_model
 
@@ -407,8 +452,8 @@ def train_autoencoder(
             writer.add_scalar(f"Metrics/{key}", value, epoch)
 
         # Compute average validation losses
-        val_recon_loss /= num_val_batches
-        val_disc_loss /= num_val_batches
+        recon_val_loss /= num_val_batches
+        disc_val_loss /= num_val_batches
         total_val_loss /= num_val_batches
 
         # Training phase
@@ -426,7 +471,14 @@ def train_autoencoder(
 
             # Forward pass
             loss_reconstruction = reconstruction_loss(outputs, batch_X) * alpha
-            loss_discriminative = discriminative_loss_fn(outputs, labels) * beta
+            # loss_discriminative = discriminative_loss_fn(outputs, labels, top_k=top_k) * beta
+            loss_discriminative = (
+                discriminative_loss_fn(
+                    outputs,
+                    labels,
+                )
+                * beta
+            )
 
             loss = loss_reconstruction + loss_discriminative
 
@@ -453,24 +505,33 @@ def train_autoencoder(
         writer.add_scalar("Loss/Train_Recon", train_recon_loss, epoch)
         writer.add_scalar("Loss/Train_Discriminative", train_disc_loss, epoch)
         writer.add_scalar("Loss/Train_Total", total_train_loss, epoch)
-        writer.add_scalar("Loss/Val_Recon", val_recon_loss, epoch)
-        writer.add_scalar("Loss/Val_Discriminative", val_disc_loss, epoch)
+        writer.add_scalar("Loss/Val_Recon", recon_val_loss, epoch)
+        writer.add_scalar("Loss/Val_Discriminative", disc_val_loss, epoch)
         writer.add_scalar("Loss/Val_Total", total_val_loss, epoch)
         writer.add_scalar("Learning_Rate", optimizer.param_groups[0]["lr"], epoch)
-
         # Print progress
         print(
             f"Epoch [{epoch+1}/{num_epochs}] - Train Loss1: {train_recon_loss:.4f}, Train Loss2: {train_disc_loss:.4f}, Train TLoss: {total_train_loss:.4f}",
             end="",
         )
         print(
-            f", Val Loss1: {val_recon_loss:.4f}, Val Loss2: {val_disc_loss:.4f}, Val TLoss: {total_val_loss:.4f}, Accuracy: {accuracy:.4f}, Detection Acc: {acc_synthetic:.4f}"
+            f", Val Loss1: {recon_val_loss:.4f}, Val Loss2: {disc_val_loss:.4f}, Val TLoss: {total_val_loss:.4f}, Accuracy: {accuracy:.4f}, Detection Acc: {acc_synthetic:.4f}",
+            end="",
         )
+        t1 = time.perf_counter()
+        print(f", Epoch took {t1 - t0:.2f} seconds")
 
         # Early stopping logic
-        val_loss_margin = 0.01
-        if total_val_loss < best_val_loss:
-            best_val_loss = total_val_loss
+        val_loss_eps = 0.005
+        val_acc_eps = 0.01
+        # if total_val_loss < best_val_loss and abs(total_val_loss - best_val_loss) > val_loss_eps:
+        if (
+            disc_val_loss < best_val_loss
+            and abs(disc_val_loss - best_val_loss) > val_loss_eps
+        ):
+            # if accuracy > best_accuracy and abs(accuracy - best_accuracy) > val_acc_eps:
+            best_val_loss = disc_val_loss
+            # best_val_loss = total_val_loss
             best_accuracy = accuracy
             best_detected_accuracy = acc_synthetic
             best_epoch = epoch
@@ -481,9 +542,12 @@ def train_autoencoder(
 
         if early_stop_counter >= es_patience:
             print(
-                f"Early stopping triggered after {epoch+1} epochs at epoch {best_epoch+1} ", end=""
+                f"Early stopping triggered after {epoch+1} epochs at epoch {best_epoch+1} ",
+                end="",
             )
-            print(f"with validation loss: {best_val_loss:.4f} and accuracy: {best_accuracy:.4f}, detection accuracy: {best_detected_accuracy:.4f}")
+            print(
+                f"with validation loss: {best_val_loss:.4f} and accuracy: {best_accuracy:.4f}, detection accuracy: {best_detected_accuracy:.4f}"
+            )
             return best_model.eval().cpu()
 
     # Close TensorBoard writer
