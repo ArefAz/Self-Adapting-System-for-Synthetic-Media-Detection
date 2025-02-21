@@ -1,0 +1,52 @@
+base_log_dir: "logs"
+
+data:
+  dataset_path: "datasets/fsd"
+  init_sources:
+    - "real"  # 0
+    - "stylegan-"  # 1
+    - "stylegan2"  # 2
+    - "stylegan3"  # 3
+  emerging_sources:
+    - "progan"  # 4
+    - "dalle3"  # 5
+    - "mjv6"  # 6
+    - "firefly"  # 7
+    - "sd3"  # 8
+  ood_sources:
+    - "tam_trans"  # 9
+
+  test_size: 0.2
+  seed: 42
+
+
+VARIANCE_THRESHOLD: 0.7
+VARIANCE_ADAPTIVE_COEFF: 0.1
+SIZE_THRESHOLD: 200
+SIZE_ADAPTIVE_COEFF: 2
+RANDOM_SAMPLES_SIZE: 1000
+N_TRIALS: 5
+
+training_kwargs:
+  num_epochs: 1
+  alpha: 1.0
+  beta: 5.0
+  batch_size: 64
+  lr: 5e-5
+  ft_lr_factor: 1.0
+  pl_patience: 0
+  es_patience: 3
+  weight_decay: 1e-2
+  top_k: 3
+  device: "cuda"
+  n_components: 5
+  cov_type: "tied"
+
+random_seed: 42
+use_autoencoder: true
+do_nothing: false
+do_retrain: false
+refine_factor: 1.0
+ood_threshold_factor: 1.2
+max_ood_fpr: 0.05
+min_ood_tpr: 0.90

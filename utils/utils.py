@@ -5,6 +5,8 @@ import glob
 import numpy as np
 import os
 import torch.nn.functional as F
+import time
+import random
 
 from .eval_att import *
 from sklearn.metrics import balanced_accuracy_score, accuracy_score
@@ -12,9 +14,14 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from torch.utils.tensorboard import SummaryWriter
-
 from copy import deepcopy
 
+
+def set_seeds(seed):
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
 
 class DummyModel:
 
@@ -122,7 +129,10 @@ def get_metrics(
     if is_rotation:
         y_current = np.ones_like(y_current) * initial_n_known
     voted_preds_current = voted_preds[y_test == max_known_label]
-    accuracy_current = sum(y_current == voted_preds_current) / len(y_current)
+    if len(y_current) > 0:
+        accuracy_current = sum(y_current == voted_preds_current) / len(y_current)
+    else:
+        accuracy_current = 0
 
     y_is_synthetic = (y_test > 0).astype(int)
     preds_synthetic = (voted_preds > 0).astype(int)
@@ -185,6 +195,7 @@ def get_metrics(
     return results, lists
 
 
+
 def get_datasets(source_list, prefix):
     seen_paths = []
     for i, source in enumerate(source_list):
@@ -196,17 +207,36 @@ def get_datasets(source_list, prefix):
     return X_train, X_test, y_train, y_test
 
 
-def compute_class_weights(y_train):
-    unique_classes, counts = np.unique(y_train.cpu().numpy(), return_counts=True)
-    total_samples = len(y_train)
-    class_weights = {
-        cl: total_samples / (len(unique_classes) * count)
-        for cl, count in zip(unique_classes, counts)
-    }
-    # sum_class_weights = sum(class_weights.values())
-    # class_weights = {cl: weight / sum_class_weights for cl, weight in class_weights.items()}
-    return class_weights
+def compute_class_weights(sample_counts, method="inverse"):
+    """
+    Compute class weights for balancing a loss function.
 
+    Args:
+        sample_counts (list or torch.Tensor): A list of sample counts per class.
+        method (str): Weighting method. Options:
+                      - "inverse": Uses 1 / count.
+                      - "inverse_sqrt": Uses 1 / sqrt(count).
+                      - "effective_num": Uses (1 - β) / (1 - β^n) (Focal loss method).
+
+    Returns:
+        torch.Tensor: Class weights.
+    """
+    # # Example usage
+    # sample_counts = [100, 500, 1000]  # Example: 3 classes with different sample sizes
+    # class_weights = compute_class_weights(sample_counts, method="inverse")
+    sample_counts = torch.tensor(sample_counts, dtype=torch.float32)
+
+    if method == "inverse":
+        weights = 1.0 / sample_counts
+    elif method == "inverse_sqrt":
+        weights = 1.0 / torch.sqrt(sample_counts)
+    elif method == "effective_num":
+        beta = 0.999  # Common choice for effective number weighting
+        weights = (1 - beta) / (1 - beta ** sample_counts)
+    else:
+        raise ValueError("Invalid method. Choose from 'inverse', 'inverse_sqrt', or 'effective_num'.")
+
+    return weights / weights.sum()  # Normalize so weights sum to 1
 
 # class OnlineTripletLoss(nn.Module):
 #     def __init__(self, margin=1.0, num_hard=1):
@@ -253,10 +283,11 @@ def compute_class_weights(y_train):
 
 
 class OnlineTripletLoss(nn.Module):
-    def __init__(self, margin=1.0, num_hard=1):
+    def __init__(self, margin=1.0, num_hard=1, class_weights=None):
         super(OnlineTripletLoss, self).__init__()
         self.margin = margin
         self.num_hard = num_hard
+        self.class_weights = class_weights
 
     def forward(self, embeddings, labels):
         distances = torch.cdist(embeddings, embeddings, p=2)  # Compute all pairwise distances
@@ -379,7 +410,6 @@ def train_autoencoder(
     num_train_batches = (len(X_train) + batch_size - 1) // batch_size
     num_val_batches = (len(X_val) + batch_size - 1) // batch_size
     best_accuracy = 0.0
-    import time
 
     for epoch in range(num_epochs):
         t0 = time.perf_counter()
@@ -554,3 +584,6 @@ def train_autoencoder(
     writer.close()
 
     return model.eval().cpu()
+
+
+
