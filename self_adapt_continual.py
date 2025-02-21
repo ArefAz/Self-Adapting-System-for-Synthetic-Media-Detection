@@ -27,7 +27,7 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from utils import *
-from config import *
+from configs import *
 import pandas as pd
 import warnings
 
@@ -203,8 +203,8 @@ for k in range(initial_n_known, len(data_sources) - 1):
         y_train[y_train == k][:RANDOM_SAMPLES_SIZE],
     )
 
-    X_test_known = X_test[y_test < initial_n_known]
-    y_test_known = y_test[y_test < initial_n_known]
+    X_test_known = X_train[y_test < initial_n_known]
+    y_test_known = y_train[y_test < initial_n_known]
     samples_size = (
         RANDOM_SAMPLES_SIZE
         if len(X_test_known) > RANDOM_SAMPLES_SIZE
