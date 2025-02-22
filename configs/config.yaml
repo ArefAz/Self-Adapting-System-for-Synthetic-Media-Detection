@@ -20,15 +20,13 @@ data:
   seed: 42
 
 
-VARIANCE_THRESHOLD: 0.7
-VARIANCE_ADAPTIVE_COEFF: 0.1
-SIZE_THRESHOLD: 200
-SIZE_ADAPTIVE_COEFF: 2
-RANDOM_SAMPLES_SIZE: 1000
-N_TRIALS: 5
+v_threshold: 0.8
+size_threshold: 500
+size_adaptive_coeff: 1.1
+num_trials: 5
 
 training_kwargs:
-  num_epochs: 1
+  num_epochs: 10
   alpha: 1.0
   beta: 5.0
   batch_size: 64
@@ -41,6 +39,7 @@ training_kwargs:
   device: "cuda"
   n_components: 5
   cov_type: "tied"
+  is_bayesian: false
 
 random_seed: 42
 use_autoencoder: true

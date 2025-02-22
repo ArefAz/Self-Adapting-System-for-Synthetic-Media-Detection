@@ -62,11 +62,11 @@ def get_datasets(configs_data):
         emerging_source_list, dataset_path, offset=len(init_source_list)
     )
     X, y = get_embeddings(emerging_fsd_paths)
-    X_emerging, y_emerging, X_test, y_test = train_test_split(
+    X_emerging, X_test, y_emerging, y_test = train_test_split(
         X, y, test_size=test_size, random_state=seed
     )
     datasets["emerging"] = {
-        "emerging": [X_emerging, y_emerging],
+        "learning": [X_emerging, y_emerging],
         "test": [X_test, y_test],
     }
 
@@ -76,9 +76,7 @@ def get_datasets(configs_data):
         offset=len(init_source_list) + len(emerging_source_list),
     )
     X, y = get_embeddings(ood_fsd_paths)
-    datasets["ood"] = {
-        "ood": [X, y],
-    }
+    datasets["ood"] = [X, y]
     return datasets
 
 

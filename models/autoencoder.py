@@ -35,6 +35,10 @@ class Autoencoder(torch.nn.Module):
         x = self.decoder(x)
         return x
     
+    def embed(self, x: np.ndarray) -> np.ndarray:
+        with torch.no_grad():
+            return self(torch.tensor(x)).cpu().numpy()
+    
 
 def train_autoencoder(
     X,
@@ -264,10 +268,10 @@ def train_autoencoder(
         )
         print(
             f", Val Loss1: {recon_val_loss:.4f}, Val Loss2: {disc_val_loss:.4f}, Val TLoss: {total_val_loss:.4f}, Accuracy: {accuracy:.4f}, Detection Acc: {acc_synthetic:.4f}",
-            end="",
+            end="\n",
         )
         t1 = time.perf_counter()
-        print(f", Epoch took {t1 - t0:.2f} seconds")
+        # print(f", Epoch took {t1 - t0:.2f} seconds")
 
         # Early stopping logic
         val_loss_eps = 0.005
