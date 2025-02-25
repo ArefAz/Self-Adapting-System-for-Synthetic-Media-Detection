@@ -19,14 +19,15 @@ class Autoencoder(torch.nn.Module):
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(input_dim, hidden_dim),
             torch.nn.ReLU(),
+            # torch.nn.Linear(hidden_dim, hidden_dim),
+            # torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim, latent_dim),
-            torch.nn.ReLU(),
         )
         self.decoder = torch.nn.Sequential(
             torch.nn.Linear(latent_dim, hidden_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(hidden_dim, hidden_dim),
-            torch.nn.ReLU(),
+            # torch.nn.Linear(hidden_dim, hidden_dim),
+            # torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim, input_dim),
         )
 
@@ -37,7 +38,7 @@ class Autoencoder(torch.nn.Module):
     
     def embed(self, x: np.ndarray) -> np.ndarray:
         with torch.no_grad():
-            return self(torch.tensor(x)).cpu().numpy()
+            return self.encoder(torch.tensor(x)).cpu().numpy()
     
 
 def train_autoencoder(
@@ -90,7 +91,7 @@ def train_autoencoder(
     cov_type = training_kwargs.get("cov_type", "full")
 
     # Move model and data to device
-    input_dim, hidden_dim, latent_dim = 640, 640, 640
+    input_dim, hidden_dim, latent_dim = 640, 1024, 640
     if pretrained_model is None:
         model = Autoencoder(input_dim, hidden_dim, latent_dim)
     else:
@@ -114,7 +115,7 @@ def train_autoencoder(
     print(X_train.shape, X_val.shape)
 
     # Loss function and optimizer
-    reconstruction_loss = nn.L1Loss()
+    reconstruction_loss = nn.MSELoss()
     discriminative_loss_fn = OnlineTripletLoss(margin=1.0, num_hard=top_k)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
@@ -146,13 +147,15 @@ def train_autoencoder(
             for i in range(num_val_batches):
                 start, end = i * batch_size, (i + 1) * batch_size
                 batch_X, labels = X_val[start:end], y_val[start:end]
-                outputs = model(batch_X)
+                
+                f_X = model.encoder(batch_X)
+                outputs = model.decoder(f_X)
 
                 loss_reconstruction = reconstruction_loss(outputs, batch_X) * alpha
                 # loss_discriminative = discriminative_loss_fn(outputs, labels, top_k=top_k) * beta
                 loss_discriminative = (
                     discriminative_loss_fn(
-                        outputs,
+                        f_X,
                         labels,
                     )
                     * beta
@@ -167,8 +170,8 @@ def train_autoencoder(
                     disc_val_loss += loss_discriminative.item()
                 total_val_loss += loss.item()
 
-            X_train_transformed = model(X_train).detach().cpu().numpy()
-            X_val_transformed = model(X_val).detach().cpu().numpy()
+            X_train_transformed = model.encoder(X_train).cpu().numpy()
+            X_val_transformed = model.encoder(X_val).cpu().numpy()
 
         gmms = {}
         y_train_np = y_train.cpu().numpy()
@@ -219,14 +222,15 @@ def train_autoencoder(
             batch_X, labels = X_train[start:end], y_train[start:end]
 
             optimizer.zero_grad()
-            outputs = model(batch_X)
+            f_X = model.encoder(batch_X)
+            outputs = model.decoder(f_X)
 
             # Forward pass
             loss_reconstruction = reconstruction_loss(outputs, batch_X) * alpha
             # loss_discriminative = discriminative_loss_fn(outputs, labels, top_k=top_k) * beta
             loss_discriminative = (
                 discriminative_loss_fn(
-                    outputs,
+                    f_X,
                     labels,
                 )
                 * beta

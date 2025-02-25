@@ -43,6 +43,7 @@ class OpenSetModel:
                 gmm = GaussianMixture(
                     n_components=self.n_components,
                     covariance_type=self.covariance_type,
+                    n_init=10,
                 )
 
             gmm.fit(X[y == i])

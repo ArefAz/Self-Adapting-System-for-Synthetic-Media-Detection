@@ -26,19 +26,19 @@ size_adaptive_coeff: 1.1
 num_trials: 7
 
 training_kwargs:
-  num_epochs: 10
+  num_epochs: 25
   alpha: 1.0
-  beta: 5.0
+  beta: 0.5
   batch_size: 64
-  lr: 5e-5
+  lr: 1e-4
   ft_lr_factor: 1.0
   pl_patience: 0
-  es_patience: 3
+  es_patience: 5
   weight_decay: 1e-2
   top_k: 3
   device: "cuda"
   n_components: 5
-  cov_type: "tied"
+  cov_type: "full"
   is_bayesian: false
 
 random_seed: 42

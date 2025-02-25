@@ -1,4 +1,8 @@
 fsd/
-figures*/
+*figures*/
 *.csv
 runs/
+old_stuff
+logs
+scratch.py
+*.pyc
