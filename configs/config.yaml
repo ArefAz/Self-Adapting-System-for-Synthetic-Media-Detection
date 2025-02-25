@@ -20,10 +20,10 @@ data:
   seed: 42
 
 
-v_threshold: 0.8
-size_threshold: 500
+v_threshold: 0.7
+size_threshold: 150
 size_adaptive_coeff: 1.1
-num_trials: 5
+num_trials: 7
 
 training_kwargs:
   num_epochs: 10
@@ -46,6 +46,5 @@ use_autoencoder: true
 do_nothing: false
 do_retrain: false
 refine_factor: 1.0
-ood_threshold_factor: 1.2
 max_ood_fpr: 0.05
-min_ood_tpr: 0.90
+min_ood_tpr: 0.10

@@ -3,7 +3,7 @@ import torch
 import warnings
 
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
-from sklearn.metrics import roc_auc_score, confusion_matrix, balanced_accuracy_score
+from sklearn.metrics import roc_auc_score, confusion_matrix, balanced_accuracy_score, roc_curve, auc
 from eval import compute_auc_crr
 
 
@@ -19,14 +19,18 @@ class OpenSetModel:
         self.n_components = n_components
         self.covariance_type = covariance_type
         self.gmm_list = []
-        self.threshold = None
+        self.thresholds = []
         self.is_bayesian = is_bayesian
         self.known_sources = []
         self.min_ood_tpr = min_ood_tpr
+        self.autoencoder = None
 
     @property
     def n_known_sources(self):
         return len(self.gmm_list)
+    
+    def set_autoencoder(self, autoencoder):
+        self.autoencoder = autoencoder
 
     def train_gmms(self, X, y):
         for i in np.unique(y):
@@ -71,50 +75,112 @@ class OpenSetModel:
     def classify(self, X):
         scores = self.predict(X)
         src_preds = np.argmax(scores, axis=1)
-        if self.threshold is not None:
-            outlier_scores = np.max(scores, axis=1)
-            negated_outlier_scores = -outlier_scores
-            ood_decisions = (negated_outlier_scores >= self.threshold).astype(int)
-            src_preds[ood_decisions == 1] = -1
+        if len(self.thresholds):
+            rejections = self.ood_detect(X)
+            src_preds[rejections] = -1
         else:
             warnings.warn("No threshold set")
 
         return src_preds
+    
+    def get_cm_labels(self, X, y, add_new_source=False):
+        preds = self.classify(X)
+        if add_new_source:
+            labels_range = np.arange(-1, self.n_known_sources + 1)
+        else:
+            labels_range = np.arange(-1, self.n_known_sources)
+        cm = confusion_matrix(y, preds, labels=labels_range)
+        return cm, labels_range
 
     def evaluate(self, X, y):
         preds = self.classify(X)
-        cm = confusion_matrix(y, preds)
-        b_acc = balanced_accuracy_score(y, preds)
+        cm = confusion_matrix(y, preds, labels=np.arange(-1, self.n_known_sources))
+        b_acc = round(balanced_accuracy_score(y, preds), 4)
         results = {
             "confusion_matrix": cm,
             "balanced_accuracy": b_acc,
         }
         return results
+    
+    def evaluate_ood(self, ood_decisions, ood_labels):
+        cm = confusion_matrix(ood_labels, ood_decisions)
+        tn, fp, fn, tp = cm.ravel()
+        tpr = tp / (tp + fn)
+        fpr = fp / (fp + tn)
+        acc = (tp + tn) / (tp + tn + fp + fn)
+        results = {
+            "ood_cm": cm,
+            "ood_tpr": round(tpr, 4),
+            "ood_fpr": round(fpr, 4),
+            "ood_acc": round(acc, 4),
+        }
+        return results
+        
 
     def ood_detect(self, X):
-        classification = self.classify(X)
-        return (classification == -1).astype(int)
-
-    def find_best_threshold(self, X, y, max_known_label):
+        # a sample is detected ood if all GMMs have a score lower than the threshold
         scores = self.predict(X)
-        auc_crr, fprs, tprs, thresholds = compute_auc_crr(
-            scores, y, max_known_label=max_known_label, return_lists=True
-        )
-        acceptable_thresholds = []
-        for fpr, tpr, threshold in zip(fprs, tprs, thresholds):
-            if tpr >= self.min_ood_tpr:
-                acceptable_thresholds.append((fpr, tpr, threshold))
+        rejections = np.zeros(scores.shape, dtype=bool)
+        for i, threshold in enumerate(self.thresholds):
+            rejections[:, i] = scores[:, i] < threshold
+        
+        return np.all(rejections, axis=1).astype(int)
+    
+    def roc_curve(self, truths, preds, num_points=2000):
+        min_preds = np.min(preds)
+        max_preds = np.max(preds)
+        thresholds = np.linspace(min_preds, max_preds, num=num_points)
+        tprs = []
+        fprs = []
+        # if len(np.unique(truths)) == 1:
+        #     warnings.warn(f"Only one class present in the ground truth values: {np.unique(truths, return_counts=True)}")
+        #     return np.zeros(1), np.zeros(1), np.zeros(1)
+        for threshold in thresholds:
+            preds_ = preds > threshold
+            # if len(np.unique(preds_)) == 1:
+            #     raise ValueError("Only one class present in the predicted values")
+            tn, fp, fn, tp = confusion_matrix(truths, preds_).ravel()
+            tpr = tp / (tp + fn)
+            fpr = fp / (fp + tn)
+            tprs.append(tpr)
+            fprs.append(fpr)
+        return np.array(fprs), np.array(tprs), thresholds
 
-        # Step 2: Select the threshold with the lowest FPR
-        if acceptable_thresholds:
-            best_threshold_tuple = min(
-                acceptable_thresholds, key=lambda x: x[0]
-            )  # x[0] is the FPR
-            selected_fpr, selected_tpr, best_threshold = best_threshold_tuple
-        else:
-            raise ValueError("No acceptable thresholds found")
 
-        return best_threshold
-
+    def find_best_thresholds(self, X, y, max_known_label):
+        
+        for i, gmm in enumerate(self.gmm_list):
+            scores = gmm.score_samples(X)
+            # negated_scores = -scores
+            y_ind = (y == i).astype(int)
+            fprs, tprs, thresholds = self.roc_curve(y_ind, scores)
+            max_j = np.max(tprs - fprs)
+            # acceptable_tuples = [
+            #     (fpr, tpr, threshold) for fpr, tpr, threshold in zip(fprs, tprs, thresholds) if np.abs((tpr - fpr) - max_j) < 0.05 # and tpr >= self.min_ood_tpr
+            # ]
+            # if len(acceptable_tuples):
+            #     best_tuple = min(acceptable_tuples, key=lambda x: (x[2],)) 
+            #     best_threshold = best_tuple[2]
+            # else:
+            #     best_threshold = np.max(scores)
+            #     warnings.warn(f"No acceptable threshold found for GMM {i}, using max score as fallback")
+            # from IPython import embed; embed()
+            # best_threshold = thresholds[np.argmax(tprs - fprs)]
+            max_j = np.max(tprs - fprs)
+            best_thresholds = thresholds[np.abs((tprs - fprs) - max_j) < 0.0125]
+            best_threshold = np.min(best_thresholds)
+            # best_threshold_idx = np.argmax(tprs - fprs)
+            # best_threshold = thresholds[best_threshold_idx]
+            # best_tuple = (fprs[best_threshold_idx], tprs[best_threshold_idx], best_threshold)
+            # if len(np.unique(y_ind)) != 1:
+            auc_value = round(roc_auc_score(y_ind, scores), 4)
+            # else:
+            #     auc_value = 0.0
+            # best_tuple = [round(x, 4) for x in best_tuple]
+            # print(f"GMM {i} Best threshold: {best_threshold}, auc: {auc_value}, fpr: {best_tuple[0]}, tpr: {best_tuple[1]}")
+            print(f"GMM {i} Best threshold: {best_threshold}, auc: {auc_value}")
+            
+            self.thresholds.append(best_threshold)       
+            
     def set_threshold(self, threshold):
         self.threshold = threshold
