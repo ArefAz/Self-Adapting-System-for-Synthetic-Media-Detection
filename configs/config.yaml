@@ -26,7 +26,7 @@ size_adaptive_coeff: 1.1
 num_trials: 7
 
 training_kwargs:
-  num_epochs: 25
+  num_epochs: 15
   alpha: 1.0
   beta: 0.5
   batch_size: 64
