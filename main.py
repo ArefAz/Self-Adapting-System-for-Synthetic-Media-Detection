@@ -78,9 +78,14 @@ if __name__ == "__main__":
     open_set_model.find_best_thresholds(
         threshold_dataset_X,
         threshold_dataset_y,
-        max_known_label=np.max(init_known_dataset[1]),
     )
     # open_set_model.set_threshold(init_threshold)
+
+    validation_results = open_set_model.evaluate(
+        initial_ae.embed(init_known_dataset[0]),
+        init_known_dataset[1],
+    )
+    validation_results_dict = {"initial": validation_results}
 
     # initial evaluation
     eval_results = open_set_model.evaluate(
@@ -90,6 +95,8 @@ if __name__ == "__main__":
 
     results_dict["initial"] = {}
     for key, value in eval_results.items():
+        if key == "confusion_matrix":
+            continue
         results_dict["initial"][key] = value
 
     save_results(results_dict, log_dir)
@@ -115,6 +122,10 @@ if __name__ == "__main__":
     emerging_labels = np.unique(y_emerging)
     current_ae = deepcopy(initial_ae)
     init_os_model = deepcopy(open_set_model)
+
+    learned_X = []
+    learned_y = []
+
     for i, emerging_label in enumerate(emerging_labels):
         emerging_source = configs["data"]["emerging_sources"][i]
         print()
@@ -133,6 +144,14 @@ if __name__ == "__main__":
                 datasets["init_known"]["learning"][0],
             )
         )
+        emerging_buffer_y = np.concatenate(
+            (
+                emerging_buffer_y,
+                datasets["init_known"]["learning"][1],
+            )
+        )
+
+        print(f"Number of unique samples in emerging buffer {np.unique(emerging_buffer_y, return_counts=True)}")
 
         ood_binary_labels = np.concatenate(
             (
@@ -149,12 +168,6 @@ if __name__ == "__main__":
         results_ood = open_set_model.evaluate_ood(ood_decisions, ood_binary_labels)
 
 
-        emerging_buffer_y = np.concatenate(
-            (
-                emerging_buffer_y,
-                datasets["init_known"]["learning"][1],
-            )
-        )
         predicted_ood_data = current_ae.embed(emerging_buffer_X[ood_decisions == 1])
         predicted_ood_true_labels = emerging_buffer_y[ood_decisions == 1]
 
@@ -166,21 +179,26 @@ if __name__ == "__main__":
                 continue
             results_dict[emerging_source][key] = value
 
-        cluster_points, cluster_labels, kmean_preds, cluster_num, cluster_mask = (
+        cluster_points, cluster_labels, kmean_preds, cluster_num, cluster_mask, clustering_metrics = (
             identify_new_sources(
                 predicted_ood_data,
                 emerging_buffer_y[ood_decisions == 1],
                 emerging_source_name=emerging_source,
+                emerging_source_label=emerging_label,
                 num_trials=configs["num_trials"],
                 v_threshold=configs["v_threshold"],
                 size_threshold=configs["size_threshold"],
                 size_adaptive_coeff=configs["size_adaptive_coeff"],
+                min_samples=configs["training_kwargs"]["cluster_min_samples"],
             )
         )
         if cluster_points is None:
             print("No new sources identified")
             continue
+        
 
+        for key, value in clustering_metrics.items():
+            results_dict[emerging_source][f"cluster_{key}"] = value
         # ID evaluation
         # Evaluate the cluster
         # Visualize the cluster
@@ -189,6 +207,7 @@ if __name__ == "__main__":
             predicted_ood_true_labels,
             kmean_preds,
             cluster_num,
+            clustering_metrics,
             emerging_source,
             emerging_label,
             log_dir,
@@ -203,18 +222,23 @@ if __name__ == "__main__":
         # System update
         # Update the GMMs
         # Update the AE
+        learned_X.extend(identified_new_src)
+        learned_y.extend(np.ones_like(cluster_labels) * open_set_model.n_known_sources)
+        
         X_ae = np.concatenate(
             (
-                datasets["init_known"]["learning"][0],
-                datasets["emerging"]["learning"][0][datasets["emerging"]["learning"][1] < emerging_label],
-                identified_new_src,
+                datasets["init_known"]["train"][0],
+                # datasets["emerging"]["learning"][0][datasets["emerging"]["learning"][1] < emerging_label],
+                np.array(learned_X),
+                # identified_new_src,
             )
         )
         y_ae = np.concatenate(
             (
-                datasets["init_known"]["learning"][1],
-                datasets["emerging"]["learning"][1][datasets["emerging"]["learning"][1] < emerging_label],
-                np.ones_like(cluster_labels) * open_set_model.n_known_sources,
+                datasets["init_known"]["train"][1],
+                # datasets["emerging"]["learning"][1][datasets["emerging"]["learning"][1] < emerging_label],
+                np.array(learned_y),
+                # np.ones_like(cluster_labels) * open_set_model.n_known_sources,
             )
         )
         X_ae_test = np.concatenate(
@@ -229,7 +253,18 @@ if __name__ == "__main__":
                 datasets["emerging"]["test"][1][datasets["emerging"]["test"][1] <= emerging_label],
             )
         )
+        # from ipdb import set_trace; set_trace()
+        class_counts = Counter(y_ae)
+        min_class_count = min(class_counts.values())
+        new_X_ae = []
+        new_y_ae = []
 
+        for label in np.unique(y_ae):
+            mask = y_ae == label
+            new_X_ae.extend(X_ae[mask][:min_class_count])
+            new_y_ae.extend(y_ae[mask][:min_class_count])
+        X_ae = np.array(new_X_ae)
+        y_ae = np.array(new_y_ae)
         current_ae = train_autoencoder(
             X_ae,
             y_ae,
@@ -237,17 +272,6 @@ if __name__ == "__main__":
             log_dir=log_dir,
             training_kwargs=configs["training_kwargs"],
         )
-
-        class_counts = Counter(y_ae)
-        min_class_count = min(class_counts.values())
-        new_X_ae = []
-        new_y_ae = []
-        for label in np.unique(y_ae):
-            mask = y_ae == label
-            new_X_ae.extend(X_ae[mask][:min_class_count])
-            new_y_ae.extend(y_ae[mask][:min_class_count])
-        X_ae = np.array(new_X_ae)
-        y_ae = np.array(new_y_ae)
 
         plot_tsne_before_after_ae(
             X_ae,
@@ -259,7 +283,6 @@ if __name__ == "__main__":
             emerging_label,
             log_dir,
         )
-
         open_set_model = OpenSetModel(
             n_components=configs["training_kwargs"]["n_components"],
             covariance_type=configs["training_kwargs"]["cov_type"],
@@ -289,7 +312,6 @@ if __name__ == "__main__":
         open_set_model.find_best_thresholds(
             threshold_dataset_X,
             threshold_dataset_y,
-            max_known_label=np.max(y_ae),
         )
         # open_set_model.set_threshold(best_threshold)
         
