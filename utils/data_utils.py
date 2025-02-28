@@ -32,7 +32,7 @@ def get_fsd_paths(source_list, dataset_path, offset=0):
     for i, source in enumerate(source_list):
         glob_path = f"{dataset_path}/*{source}*"
         fsd_paths.append((glob_path, i + offset))
-    return fsd_paths
+    return fsd_paths[:1000]
 
 
 def get_datasets(configs_data):
@@ -42,9 +42,9 @@ def get_datasets(configs_data):
     ood_source_list = configs_data["ood_sources"]
     test_size = configs_data["test_size"]
     seed = configs_data["seed"]
-    train_size = 500 * len(init_source_list)
-    learning_size = 250 * len(init_source_list)
-    test_size = 250 * len(init_source_list)
+    train_size = 400 * len(init_source_list)
+    learning_size = 400 * len(init_source_list)
+    test_size = 200 * len(init_source_list)
     datasets = {}
 
     init_fsd_paths = get_fsd_paths(init_source_list, dataset_path)
@@ -52,8 +52,12 @@ def get_datasets(configs_data):
     (X_train, y_train), (X_learning, y_learning), (X_test, y_test) = split_dataset(
         X, y, (train_size, learning_size, test_size), seed=seed
     )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train, y_train, test_size=0.25, random_state=seed
+    )
     datasets["init_known"] = {
         "train": [X_train, y_train],
+        "val": [X_val, y_val],
         "learning": [X_learning, y_learning],
         "test": [X_test, y_test],
     }
@@ -63,7 +67,10 @@ def get_datasets(configs_data):
     )
     X, y = get_embeddings(emerging_fsd_paths)
     X_emerging, X_test, y_emerging, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=seed
+        X, y, test_size=0.5, random_state=seed
+    )
+    X_test, _, y_test, _ = train_test_split(
+        X_test, y_test, test_size=0.5, random_state=seed
     )
     datasets["emerging"] = {
         "learning": [X_emerging, y_emerging],

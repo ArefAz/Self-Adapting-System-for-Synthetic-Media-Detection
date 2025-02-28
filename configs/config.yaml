@@ -12,18 +12,16 @@ data:
     - "dalle3"  # 5
     - "mjv6"  # 6
     - "firefly"  # 7
-    - "sd3"  # 8
+    - "sd14"  # 8
+    - "sd3"  # 9
+    - "eg3d"  # 10
+    - "sd2"  # 11
+    - "mjv5" # 12
+    - "sdxl" # 13
   ood_sources:
-    - "tam_trans"  # 9
-
+    - "tam_trans" # 9
   test_size: 0.2
   seed: 42
-
-
-v_threshold: 0.7
-size_threshold: 150
-size_adaptive_coeff: 1.1
-num_trials: 7
 
 training_kwargs:
   num_epochs: 15
@@ -33,13 +31,19 @@ training_kwargs:
   lr: 1e-4
   ft_lr_factor: 1.0
   pl_patience: 0
-  es_patience: 5
+  es_patience: 3
   weight_decay: 1e-2
   top_k: 3
   device: "cuda"
-  n_components: 5
+  n_components: 2
   cov_type: "full"
-  is_bayesian: false
+  is_bayesian: true
+  cluster_min_samples: 7
+
+v_threshold: 10000.0
+size_threshold: 75
+size_adaptive_coeff: 1.1
+num_trials: 10
 
 random_seed: 42
 use_autoencoder: true

@@ -91,7 +91,7 @@ def train_autoencoder(
     cov_type = training_kwargs.get("cov_type", "full")
 
     # Move model and data to device
-    input_dim, hidden_dim, latent_dim = 640, 1000, 640
+    input_dim, hidden_dim, latent_dim = 640, 1024, 640
     if pretrained_model is None:
         model = Autoencoder(input_dim, hidden_dim, latent_dim)
     else:
