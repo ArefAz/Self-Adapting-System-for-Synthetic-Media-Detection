@@ -45,6 +45,8 @@ if __name__ == "__main__":
     initial_ae = train_autoencoder(
         datasets["init_known"]["train"][0],
         datasets["init_known"]["train"][1],
+        datasets["init_known"]["val"][0],
+        datasets["init_known"]["val"][1],
         source_name="init_known",
         log_dir=log_dir,
         training_kwargs=configs["training_kwargs"],
@@ -64,14 +66,14 @@ if __name__ == "__main__":
 
     threshold_dataset_X = np.concatenate(
         (
-            initial_ae.embed(datasets["init_known"]["train"][0]),
+            initial_ae.embed(datasets["init_known"]["val"][0]),
             # initial_ae.embed(datasets["emerging"]["test"][0]),
             initial_ae.embed(datasets["ood"][0]),
         )
     )
     threshold_dataset_y = np.concatenate(
         (
-            datasets["init_known"]["train"][1],
+            datasets["init_known"]["val"][1],
             # datasets["emerging"]["test"][1],
             datasets["ood"][1],
         )

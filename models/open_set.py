@@ -169,7 +169,7 @@ class OpenSetModel:
             fprs, tprs, thresholds = self.roc_curve(y_ind, scores, range_, 5000)
             max_j = np.max(tprs - fprs)
             acceptable_tuples = [
-                (fpr, tpr, threshold) for fpr, tpr, threshold in zip(fprs, tprs, thresholds) if np.abs((tpr - fpr) - max_j) < 0.01 # and tpr >= self.min_ood_tpr
+                (fpr, tpr, threshold) for fpr, tpr, threshold in zip(fprs, tprs, thresholds) if np.abs((tpr - fpr) - max_j) < 0.001 # and tpr >= self.min_ood_tpr
             ]
             if len(acceptable_tuples):
                 best_tuple = min(acceptable_tuples, key=lambda x: (x[0], )) 

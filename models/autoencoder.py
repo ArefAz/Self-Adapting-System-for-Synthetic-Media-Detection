@@ -6,9 +6,9 @@ import torch.nn.functional as F
 import time
 
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
+from sklearn.utils import shuffle
 from torch.utils.tensorboard import SummaryWriter
 from copy import deepcopy
-from sklearn.model_selection import train_test_split
 from .loss import OnlineTripletLoss
 
 
@@ -42,10 +42,12 @@ class Autoencoder(torch.nn.Module):
     
 
 def train_autoencoder(
-    X,
-    y,
+    X_train,
+    y_train,
+    X_val,
+    y_val,
     source_name,
-    val_size=0.2,
+    # val_size=0.2,
     log_dir="runs",
     pretrained_model=None,
     max_known_label=None,
@@ -75,7 +77,7 @@ def train_autoencoder(
     batch_size = 64
     lr = 1e-4
     top_k = 1
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=val_size, random_state=42)
+    # X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=val_size, random_state=42)
 
     num_epochs = training_kwargs.get("num_epochs", num_epochs)
     alpha = training_kwargs.get("alpha", alpha)
@@ -112,7 +114,7 @@ def train_autoencoder(
     X_train, y_train = X_train.to(device), y_train.to(device)
     X_val, y_val = X_val.to(device), y_val.to(device)
 
-    print(X_train.shape, X_val.shape)
+    print(f"Autoencoder training with {len(X_train)} samples and {len(X_val)} validation samples")
 
     # Loss function and optimizer
     reconstruction_loss = nn.MSELoss()
@@ -217,6 +219,9 @@ def train_autoencoder(
         train_disc_loss = 0.0
         total_train_loss = 0.0
 
+        # shuffle the data
+        X_train, y_train = shuffle(X_train, y_train)
+
         for i in range(num_train_batches):
             start, end = i * batch_size, (i + 1) * batch_size
             batch_X, labels = X_train[start:end], y_train[start:end]
@@ -282,12 +287,12 @@ def train_autoencoder(
         val_acc_eps = 0.01
         # if total_val_loss < best_val_loss and abs(total_val_loss - best_val_loss) > val_loss_eps:
         if (
-            disc_val_loss < best_val_loss
-            and abs(disc_val_loss - best_val_loss) > val_loss_eps
+            total_val_loss < best_val_loss
+            and abs(total_val_loss - best_val_loss) > val_loss_eps
         ):
             # if accuracy > best_accuracy and abs(accuracy - best_accuracy) > val_acc_eps:
-            best_val_loss = disc_val_loss
-            # best_val_loss = total_val_loss
+            # best_val_loss = disc_val_loss
+            best_val_loss = total_val_loss
             best_accuracy = accuracy
             best_detected_accuracy = acc_synthetic
             best_epoch = epoch

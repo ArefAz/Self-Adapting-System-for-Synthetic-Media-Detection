@@ -106,7 +106,7 @@ def propose_an_update(
         unique_clusters = [lab for lab in np.unique(cluster_preds) if lab != -1]
         n_clusters = len(np.unique(cluster_preds))
         if n_clusters <= 1:
-            print(f"DBSCAN with eps={round(eps, 2)} resulted in {n_clusters} clusters")
+            print(f"DBSCAN with eps={round(eps, 2)} resulted in {n_clusters} cluster")
             continue
         for cluster_id in unique_clusters:
             cluster_mask = cluster_preds == cluster_id
@@ -161,6 +161,19 @@ def propose_an_update(
                     np.array(learned_y),
                 )
             )
+            X_ae_val = np.concatenate(
+                (
+                    datasets["init_known"]["val"][0],
+                    np.array(learned_X_val),
+                )
+            )
+            y_ae_val = np.concatenate(
+                (
+                    datasets["init_known"]["val"][1],
+                    np.array(learned_y_val),
+                )
+            )
+
             X_ae_test = np.concatenate(
                 (
                     datasets["init_known"]["test"][0],
@@ -181,16 +194,29 @@ def propose_an_update(
             min_class_count = min(class_counts.values())
             new_X_ae = []
             new_y_ae = []
-
             for label in np.unique(y_ae):
                 cluster_mask = y_ae == label
                 new_X_ae.extend(X_ae[cluster_mask][:min_class_count])
                 new_y_ae.extend(y_ae[cluster_mask][:min_class_count])
             X_ae = np.array(new_X_ae)
             y_ae = np.array(new_y_ae)
+
+            # class_counts_val = Counter(y_ae_val)
+            # min_class_count_val = min(class_counts_val.values())
+            # new_X_ae_val = []
+            # new_y_ae_val = []
+            # for label in np.unique(y_ae_val):
+            #     cluster_mask = y_ae_val == label
+            #     new_X_ae_val.extend(X_ae_val[cluster_mask][:min_class_count_val])
+            #     new_y_ae_val.extend(y_ae_val[cluster_mask][:min_class_count_val])
+            # X_ae_val = np.array(new_X_ae_val)
+            # y_ae_val = np.array(new_y_ae_val)
+
             tmp_ae = train_autoencoder(
                 X_ae,
                 y_ae,
+                X_ae_val,
+                y_ae_val,
                 source_name=emerging_source,
                 log_dir=log_dir,
                 training_kwargs=configs["training_kwargs"],
@@ -207,35 +233,13 @@ def propose_an_update(
                 y_ae,
             )
 
-            threshold_dataset_X = np.concatenate(
-                (
-                    tmp_ae.embed(datasets["init_known"]["train"][0]),
-                    tmp_ae.embed(X_ae),
-                )
-            )
-            threshold_dataset_y = np.concatenate(
-                (
-                    datasets["init_known"]["train"][1],
-                    y_ae,
-                )
-            )
+            validation_dataset_X = tmp_ae.embed(X_ae_val)
+            validation_dataset_y = y_ae_val
             tmp_open_set_model.find_best_thresholds(
-                threshold_dataset_X,
-                threshold_dataset_y,
+                validation_dataset_X,
+                validation_dataset_y,
             )
 
-            validation_dataset_X = np.concatenate(
-                (
-                    tmp_ae.embed(datasets["init_known"]["val"][0]),
-                    tmp_ae.embed(learned_X_val),
-                )
-            )
-            validation_dataset_y = np.concatenate(
-                (
-                    datasets["init_known"]["val"][1],
-                    learned_y_val,
-                )
-            )
             validation_results = tmp_open_set_model.evaluate(
                 validation_dataset_X,
                 validation_dataset_y,
