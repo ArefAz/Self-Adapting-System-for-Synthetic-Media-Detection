@@ -14,8 +14,8 @@ data:
     - "firefly"  # 7
     - "sd14"  # 8
     - "sd3"  # 9
-    - "eg3d"  # 10
-    - "sd2"  # 11
+    # - "eg3d"  # 10
+    # - "sd2"  # 11
     - "mjv5" # 12
     - "sdxl" # 13
   ood_sources:
@@ -24,7 +24,7 @@ data:
   seed: 42
 
 training_kwargs:
-  num_epochs: 15
+  num_epochs: 20
   alpha: 1.0
   beta: 0.5
   batch_size: 64
@@ -40,10 +40,10 @@ training_kwargs:
   is_bayesian: true
   cluster_min_samples: 7
 
+num_trials: 10
 v_threshold: 10000.0
 size_threshold: 75
 size_adaptive_coeff: 1.1
-num_trials: 10
 
 random_seed: 42
 use_autoencoder: true

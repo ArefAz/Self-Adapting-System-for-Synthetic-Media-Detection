@@ -50,15 +50,24 @@ def plot_confusion_matrix(
 def plot_clustering_results(
     predicted_ood_data,
     predicted_ood_true_labels,
-    kmean_preds,
+    clustering_preds,
     selected_cluster,
+    clustering_metrics,
     emerging_source,
     emerging_label,
     log_dir,
-):
+):  
+    
+
+    tpr = clustering_metrics["tpr"]
+    fpr = clustering_metrics["fpr"]
 
     fig, ax = plt.subplots(1, 2, figsize=(15, 6))
-    X_pca = PCA(n_components=2).fit_transform(predicted_ood_data)
+    fig.suptitle(
+        f"TPR: {tpr:.4f}, FPR: {fpr:.4f}\n"
+        f"Clustering results for emerging source {emerging_source} with label: {emerging_label}"
+    )
+    X_pca = TSNE(n_components=2).fit_transform(predicted_ood_data)
     ax[0].set_xlabel("PCA component 1")
     ax[0].set_ylabel("PCA component 2")
     ax[0].set_title(
@@ -70,7 +79,7 @@ def plot_clustering_results(
         f"True labels among OOD samples for emerging source {emerging_source}"
     )
     sns.scatterplot(
-        x=X_pca[:, 0], y=X_pca[:, 1], hue=kmean_preds, palette="tab10", s=25, ax=ax[0]
+        x=X_pca[:, 0], y=X_pca[:, 1], hue=clustering_preds, palette="tab10", s=25, ax=ax[0]
     )
     sns.scatterplot(
         x=X_pca[:, 0],

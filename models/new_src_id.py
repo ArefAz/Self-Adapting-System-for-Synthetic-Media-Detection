@@ -2,7 +2,9 @@ from sklearn.cluster import KMeans, DBSCAN
 import numpy as np
 from sklearn.metrics import normalized_mutual_info_score
 from sklearn.metrics import pairwise_distances
-
+import numpy as np
+from sklearn.metrics import normalized_mutual_info_score, pairwise_distances
+from sklearn.metrics import accuracy_score, confusion_matrix
 
 def trimmed_variance_multivariate(data, trim_fraction=0.1, center_func=np.mean):
     """
@@ -151,10 +153,6 @@ def identify_new_sources(
     size_adaptive_coeff,
     min_samples=5,
 ):
-    import numpy as np
-    from sklearn.cluster import DBSCAN
-    from sklearn.metrics import normalized_mutual_info_score, pairwise_distances
-    from sklearn.metrics import accuracy_score, confusion_matrix
 
     selected_cluster = None
     cluster_labels = None  # will hold the latest DBSCAN labels
@@ -288,11 +286,7 @@ def identify_new_sources_iter(
     size_adaptive_coeff,
     min_samples=5,
 ):
-    import numpy as np
-    from sklearn.cluster import DBSCAN
-    from sklearn.metrics import normalized_mutual_info_score, pairwise_distances
-    from sklearn.metrics import accuracy_score, confusion_matrix
-
+    
     # This dictionary will hold all results.
     results = {}
 
