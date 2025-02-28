@@ -1,6 +1,7 @@
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, DBSCAN
 import numpy as np
 from sklearn.metrics import normalized_mutual_info_score
+from sklearn.metrics import pairwise_distances
 
 
 def trimmed_variance_multivariate(data, trim_fraction=0.1, center_func=np.mean):
@@ -276,31 +277,37 @@ def identify_new_sources(
     )
 
 
-def identify_new_sources_new(
+def identify_new_sources_iter(
     predicted_ood_data,
     ood_data_true_labels,
     emerging_source_name,
     emerging_source_label,
     num_trials,
+    v_threshold,
     size_threshold,
     size_adaptive_coeff,
-    min_samples=10  # default value; adjust as needed
+    min_samples=5,
 ):
     import numpy as np
     from sklearn.cluster import DBSCAN
     from sklearn.metrics import normalized_mutual_info_score, pairwise_distances
     from sklearn.metrics import accuracy_score, confusion_matrix
 
-    selected_cluster = None
-    cluster_labels = None  # will hold the latest DBSCAN labels
+    # This dictionary will hold all results.
+    results = {}
+
+    selected_cluster = None  # Candidate cluster chosen based on size threshold.
+    cluster_labels = None    # Final DBSCAN labels from the chosen trial.
+    selected_trial = None    # Which trial (eps value) we used.
+    used_eps = None          # The eps value used in the selected trial.
+    clusters_info = {}       # Dictionary to hold info for each cluster.
 
     # Set up a range of eps values.
-    # Compute pairwise distances and take the 90th percentile as an upper bound.
     dists = pairwise_distances(predicted_ood_data)
-    upper_bound = np.percentile(dists, 90)
-    # Avoid eps=0 by starting at a small positive value.
+    upper_bound = np.percentile(dists, 60)
     eps_values = np.linspace(0.1, upper_bound, num_trials)
 
+    # Iterate over eps values until we find a DBSCAN run with candidate clusters.
     for trial, eps in enumerate(eps_values, start=1):
         dbscan = DBSCAN(eps=eps, min_samples=min_samples)
         dbscan.fit(predicted_ood_data)
@@ -313,70 +320,184 @@ def identify_new_sources_new(
             print("  No clusters found (only noise).")
             continue
 
-        # Compute the size of each cluster.
+        # Compute cluster centers, sizes, and variances.
+        cluster_centers = {}
         cluster_sizes = {}
+        cluster_variances = {}
+        all_distances = []
+
         for cluster in unique_clusters:
             cluster_mask = cluster_labels == cluster
+            cluster_points = predicted_ood_data[cluster_mask]
+            # Compute centroid for the cluster.
+            center = np.mean(cluster_points, axis=0)
+            cluster_centers[cluster] = center
             cluster_sizes[cluster] = np.sum(cluster_mask)
+            distances = np.linalg.norm(cluster_points - center, axis=1)
+            all_distances.extend(distances)
+            cluster_variances[cluster] = np.var(distances)
 
-        # Compute the adapted size threshold (if desired).
-        adapted_size_threshold = size_threshold / (trial / size_adaptive_coeff)
-        print(f"  Adapted size threshold: {adapted_size_threshold}")
+        all_distances = np.array(all_distances)
+        overall_variance = np.var(all_distances)
+
+        # Normalize cluster variances.
+        normalized_cluster_variances = {
+            cluster: var / overall_variance for cluster, var in cluster_variances.items()
+        }
+
         print(f"  Cluster sizes: {cluster_sizes}")
+        print(f"  Normalized variances: {normalized_cluster_variances}")
 
-        # Select the first cluster (in ascending order) that meets the size criterion.
-        for cluster in sorted(unique_clusters):
-            if cluster_sizes[cluster] >= adapted_size_threshold:
-                selected_cluster = cluster
-                print(f"  Selected cluster: {selected_cluster}")
-                break
+        # Set (or adapt) size threshold. (In this version, we ignore variance for candidate selection.)
+        adapted_size_threshold = size_threshold  # or: size_threshold / (trial / size_adaptive_coeff)
+        print(f"  Adapted size threshold: {adapted_size_threshold}")
 
-        if selected_cluster is not None:
-            break  # Stop if a candidate cluster is found.
-        print()  # Visual separation for trials.
+        # Identify candidate clusters based solely on size.
+        candidate_clusters = [
+            cluster for cluster in unique_clusters if cluster_sizes[cluster] >= adapted_size_threshold
+        ]
+        print(f"  Candidate clusters (size >= threshold): {candidate_clusters}")
 
-    # If no cluster meets the criteria, return an empty mask.
+        if candidate_clusters:
+            # For consistency, choose the first candidate (e.g. smallest cluster label) as the "selected" one.
+            selected_cluster = sorted(candidate_clusters)[0]
+            selected_trial = trial
+            used_eps = eps
+            break
+        print()  # Visual separation across trials
+
+    # If no candidate clusters were found in any trial, then we return an empty result.
     if selected_cluster is None:
-        print(
-            f"No new source was identified among OOD samples for emerging source {emerging_source_name}"
-        )
-        selected_cluster_mask = np.zeros(predicted_ood_data.shape[0], dtype=bool)
-        selected_cluster_points = predicted_ood_data[selected_cluster_mask]
-        selected_cluster_labels = ood_data_true_labels[selected_cluster_mask]
-    else:
-        selected_cluster_mask = cluster_labels == selected_cluster
-        selected_cluster_points = predicted_ood_data[selected_cluster_mask]
-        selected_cluster_labels = ood_data_true_labels[selected_cluster_mask]
+        print(f"No new source was identified among OOD samples for emerging source {emerging_source_name}")
+        results = {
+            "selected_trial": None,
+            "used_eps": None,
+            "global": {},
+            "clusters": {}
+        }
+        return results
 
-    # Evaluate the clustering performance for the selected cluster.
+    # Global metric computed on the full DBSCAN run.
     nmi = normalized_mutual_info_score(ood_data_true_labels, cluster_labels)
-    y_true = (ood_data_true_labels == emerging_source_label)
-    y_pred = selected_cluster_mask
-    cm = confusion_matrix(y_true, y_pred)
-    if cm.size == 4:
-        tn, fp, fn, tp = cm.ravel()
-        tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
-    else:
-        # In case confusion_matrix returns a smaller array (e.g., no positives), set metrics to 0.
-        tn = fp = fn = tp = 0
-        tpr = fpr = 0.0
-    acc = accuracy_score(y_true, y_pred)
-    print(f"Clustering FPR: {fpr:.4f}, TPR: {tpr:.4f}, ACC: {acc:.4f}, NMI: {nmi:.4f}")
-    print(f"Selected cluster size: {np.sum(selected_cluster_mask)}")
 
-    metrics = {
-        "tpr": round(tpr, 4),
-        "fpr": round(fpr, 4),
-        "acc": round(acc, 4),
-        "nmi": round(nmi, 4),
+    # For each cluster (ignoring noise), compute a dictionary of its info and evaluation metrics.
+    for cluster in np.unique(cluster_labels):
+        if cluster == -1:
+            continue
+        cluster_mask = cluster_labels == cluster
+        cluster_points = predicted_ood_data[cluster_mask]
+        cluster_true_labels = ood_data_true_labels[cluster_mask]
+        size = np.sum(cluster_mask)
+        norm_var = normalized_cluster_variances.get(cluster, None)
+        
+        # Evaluate this cluster against the emerging source.
+        y_true = (ood_data_true_labels == emerging_source_label)
+        y_pred = cluster_mask
+        cm = confusion_matrix(y_true, y_pred)
+        # Handle cases where confusion_matrix might not be 2x2:
+        if cm.size == 4:
+            tn, fp, fn, tp = cm.ravel()
+            tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+        else:
+            tpr = 0.0
+            fpr = 0.0
+        acc = accuracy_score(y_true, y_pred)
+
+        clusters_info[cluster] = {
+            "mask": cluster_mask,
+            "points": cluster_points,
+            "true_labels": cluster_true_labels,
+            "size": size,
+            "normalized_variance": norm_var,
+            "metrics": {
+                "tpr": round(tpr, 4),
+                "fpr": round(fpr, 4),
+                "acc": round(acc, 4),
+            }
+        }
+
+    # Also extract the "selected" cluster info (the one we used to break out).
+    selected_cluster_mask = cluster_labels == selected_cluster
+    selected_cluster_points = predicted_ood_data[selected_cluster_mask]
+    selected_cluster_labels = ood_data_true_labels[selected_cluster_mask]
+
+    print(f"\nGlobal NMI: {nmi:.4f}")
+    print(f"Selected cluster: {selected_cluster} (Trial {selected_trial}, eps = {used_eps:.3f})")
+    print(f"Selected cluster size: {np.sum(selected_cluster_mask)}; Normalized variance: {normalized_cluster_variances[selected_cluster]:.4f}")
+
+    global_metrics = {
+        "nmi": round(nmi, 4)
     }
 
-    return (
-        selected_cluster_points,
-        selected_cluster_labels,
-        cluster_labels,
-        selected_cluster,
-        selected_cluster_mask,
-        metrics,
-    )
+    # Package everything into the results dictionary.
+    results = {
+        "selected_trial": selected_trial,
+        "used_eps": used_eps,
+        "global": {
+            "cluster_labels": cluster_labels,
+            "global_metrics": global_metrics
+        },
+        "selected_cluster": {
+            "label": selected_cluster,
+            "mask": selected_cluster_mask,
+            "points": selected_cluster_points,
+            "true_labels": selected_cluster_labels,
+            "size": int(np.sum(selected_cluster_mask)),
+            "normalized_variance": normalized_cluster_variances[selected_cluster]
+        },
+        "clusters": clusters_info
+    }
+
+    return results
+
+
+def run_dbscan_single(data, eps, min_samples=5):
+
+    dbscan = DBSCAN(eps=eps, min_samples=min_samples)
+    dbscan.fit(data)
+    cluster_labels = dbscan.labels_
+    # unique_clusters = [lab for lab in np.unique(cluster_labels) if lab != -1]
+    unique_clusters = np.unique(cluster_labels)
+    
+    # Calculate the size (number of samples) for each cluster.
+    cluster_sizes = {}
+    cluster_masks = {}
+    cluster_points_dict = {}
+    for cluster in unique_clusters:
+        cluster_mask = cluster_labels == cluster
+        cluster_masks[cluster] = cluster_mask
+        cluster_sizes[cluster] = np.sum(cluster_mask)
+        cluster_points = data[cluster_mask]
+        cluster_points_dict[cluster] = cluster_points
+        
+    return {
+        "cluster_preds": cluster_labels,
+        "unique_clusters": unique_clusters,
+        "cluster_sizes": cluster_sizes,
+        "cluster_masks": cluster_masks,
+        "cluster_points": cluster_points_dict,
+    }
+
+
+def run_dbscan_over_eps(data, eps_values, min_samples=5):
+
+    results = {}
+    for eps in eps_values:
+        result = run_dbscan_single(data, eps, min_samples=min_samples)
+        results[eps] = result
+    return results
+
+
+def get_dbscan_results(data, num_trials, min_samples=5):
+    
+    # Compute pairwise distances and define an upper bound using the 90th percentile.
+    dists = pairwise_distances(data)
+    upper_bound = np.percentile(dists, 60)
+    
+    # Generate a sequence of eps values from a small positive value to the upper bound.
+    eps_values = np.linspace(0.1, upper_bound, num_trials)
+    
+    # Run DBSCAN for each epsilon value.
+    results = run_dbscan_over_eps(data, eps_values, min_samples=min_samples)
+    return results

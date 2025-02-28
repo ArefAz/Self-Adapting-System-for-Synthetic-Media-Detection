@@ -38,15 +38,15 @@ class OpenSetModel:
                 gmm = BayesianGaussianMixture(
                     n_components=self.n_components,
                     covariance_type=self.covariance_type,
-                    n_init=10,
-                    # reg_covar=1e-4,
+                    # n_init=10,
+                    reg_covar=1e-5,
                 )
             else:
                 gmm = GaussianMixture(
                     n_components=self.n_components,
                     covariance_type=self.covariance_type,
-                    n_init=10,
-                    # reg_covar=1e-4,
+                    # n_init=10,
+                    reg_covar=1e-5,
                 )
 
             gmm.fit(X[y == i])
@@ -147,18 +147,11 @@ class OpenSetModel:
         return np.all(rejections, axis=1).astype(int)
     
     def roc_curve(self, truths, preds, range_, num_points):
-        # min_preds = np.min(preds)
-        # max_preds = np.max(preds)
         thresholds = np.linspace(range_[0], range_[1], num=num_points)
         tprs = []
         fprs = []
-        # if len(np.unique(truths)) == 1:
-        #     warnings.warn(f"Only one class present in the ground truth values: {np.unique(truths, return_counts=True)}")
-        #     return np.zeros(1), np.zeros(1), np.zeros(1)
         for threshold in thresholds:
             preds_ = preds > threshold
-            # if len(np.unique(preds_)) == 1:
-            #     raise ValueError("Only one class present in the predicted values")
             tn, fp, fn, tp = confusion_matrix(truths, preds_).ravel()
             tpr = tp / (tp + fn)
             fpr = fp / (fp + tn)
@@ -171,24 +164,15 @@ class OpenSetModel:
         
         for i, gmm in self.gmm_dict.items():
             scores = gmm.score_samples(X)
-            scores_i = scores[y == i]
-            # negated_scores = -scores
             y_ind = (y == i).astype(int)
-            # min_y_ind_score = np.min(scores_i)
-            # max_y_ind_score = np.max(scores_i)
-            # std_y_ind_score = np.abs(np.std(scores_i))
             range_ = (scores.min(), scores.max())
-            # if i == 4:
-            #     from ipdb import set_trace; set_trace()
-            #     pass
-            fprs, tprs, thresholds = self.roc_curve(y_ind, scores, range_, 10000)
-            # fprs, tprs, thresholds = roc_curve(y_ind, scores, drop_intermediate=False)
+            fprs, tprs, thresholds = self.roc_curve(y_ind, scores, range_, 5000)
             max_j = np.max(tprs - fprs)
             acceptable_tuples = [
                 (fpr, tpr, threshold) for fpr, tpr, threshold in zip(fprs, tprs, thresholds) if np.abs((tpr - fpr) - max_j) < 0.01 # and tpr >= self.min_ood_tpr
             ]
             if len(acceptable_tuples):
-                best_tuple = min(acceptable_tuples, key=lambda x: (x[2], x[0])) 
+                best_tuple = min(acceptable_tuples, key=lambda x: (x[0], )) 
                 best_threshold = best_tuple[2]
             else:
                 best_threshold = np.max(scores)
@@ -212,7 +196,7 @@ class OpenSetModel:
             # else:
             #     auc_value = 0.0
             best_tuple = [round(x, 4) for x in best_tuple]
-            print(f"GMM {i} Best threshold: {best_threshold}, auc: {auc_value}, fpr: {best_tuple[0]}, tpr: {best_tuple[1]}")
+            # print(f"GMM {i} Best threshold: {best_threshold}, auc: {auc_value}, fpr: {best_tuple[0]}, tpr: {best_tuple[1]}")
             # print(f"GMM {i} Best threshold: {best_threshold}, auc: {auc_value}")
             
             self.thresholds.append(best_threshold)       
