@@ -3,9 +3,10 @@ import glob
 import os
 import numpy as np
 from sklearn.model_selection import train_test_split
+from collections import defaultdict
 
 
-def get_embeddings(dirs):
+def get_embeddings(dirs, max_num=None):
     if isinstance(dirs, str):
         dirs = [dirs]
     model_paths = []
@@ -14,6 +15,8 @@ def get_embeddings(dirs):
         model_path_list = [
             p for p in glob.glob(f"{dir}/*.pth") if os.path.getsize(p) > 0
         ]
+        if max_num is not None:
+            model_path_list = model_path_list[:max_num]
         model_paths += model_path_list
         labels += [label] * len(model_path_list)
     embeddings = []
@@ -32,7 +35,7 @@ def get_fsd_paths(source_list, dataset_path, offset=0):
     for i, source in enumerate(source_list):
         glob_path = f"{dataset_path}/*{source}*"
         fsd_paths.append((glob_path, i + offset))
-    return fsd_paths[:1000]
+    return fsd_paths
 
 
 def get_datasets(configs_data):
@@ -40,17 +43,12 @@ def get_datasets(configs_data):
     init_source_list = configs_data["init_sources"]
     emerging_source_list = configs_data["emerging_sources"]
     ood_source_list = configs_data["ood_sources"]
-    test_size = configs_data["test_size"]
-    seed = configs_data["seed"]
-    train_size = 250 * len(init_source_list)
-    learning_size = 600 * len(init_source_list)
-    test_size = 150 * len(init_source_list)
     datasets = {}
 
     init_fsd_paths = get_fsd_paths(init_source_list, dataset_path)
     X, y = get_embeddings(init_fsd_paths)
     data_dict = convert_xy_to_dict(X, y)
-    fractions = [0.2, 0.05, 0.5, 0.25]
+    fractions = [0.375, 0.125, 0.375, 0.125]
     splits = split_dataset_by_class_fractions(data_dict, fractions, seed=42)
     combined_dict = combine_splits_to_xy(splits)
     X_train, y_train = combined_dict[0]
@@ -68,7 +66,7 @@ def get_datasets(configs_data):
     emerging_fsd_paths = get_fsd_paths(
         emerging_source_list, dataset_path, offset=len(init_source_list)
     )
-    X, y = get_embeddings(emerging_fsd_paths)
+    X, y = get_embeddings(emerging_fsd_paths, max_num=1000)
     fractions = [0.75, 0.25]
     splits = split_dataset_by_class_fractions(convert_xy_to_dict(X, y), fractions, seed=42)
     combined_dict = combine_splits_to_xy(splits)
@@ -116,8 +114,6 @@ def split_dataset(X, y, sizes, seed=None):
 
     return (X1, y1), (X2, y2), (X3, y3)
 
-import numpy as np
-from collections import defaultdict
 
 def convert_xy_to_dict(X, y):
     """
@@ -182,8 +178,6 @@ def split_dataset_by_class_fractions(data_dict, fractions, seed=42):
             start += count
     
     return subsets
-
-import numpy as np
 
 def combine_splits_to_xy(splits):
     """

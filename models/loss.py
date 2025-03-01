@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class OnlineTripletLoss(nn.Module):
+class TripletLoss(nn.Module):
     def __init__(self, margin=1.0, num_hard=1, class_weights=None):
-        super(OnlineTripletLoss, self).__init__()
+        super(TripletLoss, self).__init__()
         self.margin = margin
         self.num_hard = num_hard
         self.class_weights = class_weights
@@ -31,10 +31,11 @@ class OnlineTripletLoss(nn.Module):
             return torch.tensor(0.0, device=embeddings.device)  # Return zero loss if no valid triplets
 
         # Select the hardest positives and negatives
-        hard_positives = torch.topk(positive_distances, k_positive, largest=True).values.mean()
-        hard_negatives = torch.topk(negative_distances, k_negative, largest=False).values.mean()
+        hard_positives = torch.topk(positive_distances, k_positive, largest=True).values
+        hard_negatives = torch.topk(negative_distances, k_negative, largest=False).values
         # print(f"{positive_distances.mean().item():.4f}", f"{negative_distances.mean().item():.4f}", f"{hard_positives.item():.4f}", f"{hard_negatives.item():.4f}")
 
-        # Compute loss and return mean over batch
-        triplet_loss = F.relu(hard_positives - hard_negatives + self.margin)
+        loss = F.relu(hard_positives.unsqueeze(1) - hard_negatives.unsqueeze(0) + self.margin)
+        triplet_loss = loss.mean()
+
         return triplet_loss

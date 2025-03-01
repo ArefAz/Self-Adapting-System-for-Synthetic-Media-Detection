@@ -9,7 +9,7 @@ from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from sklearn.utils import shuffle
 from torch.utils.tensorboard import SummaryWriter
 from copy import deepcopy
-from .loss import OnlineTripletLoss
+from .loss import TripletLoss
 
 
 
@@ -118,7 +118,7 @@ def train_autoencoder(
 
     # Loss function and optimizer
     reconstruction_loss = nn.MSELoss()
-    discriminative_loss_fn = OnlineTripletLoss(margin=1.0, num_hard=top_k)
+    discriminative_loss_fn = TripletLoss(margin=1.0, num_hard=top_k)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     # Learning rate scheduler

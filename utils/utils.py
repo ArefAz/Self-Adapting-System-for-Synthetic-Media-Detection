@@ -18,6 +18,7 @@ from copy import deepcopy
 
 
 def set_seeds(seed):
+    return
     np.random.seed(seed)
     random.seed(seed)
     torch.manual_seed(seed)

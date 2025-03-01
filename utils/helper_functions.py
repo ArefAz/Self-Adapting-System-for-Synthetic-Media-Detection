@@ -108,7 +108,14 @@ def propose_an_update(
         if n_clusters <= 1:
             print(f"DBSCAN with eps={round(eps, 2)} resulted in {n_clusters} cluster")
             continue
-        for cluster_id in unique_clusters:
+        # Sort clusters by their size in descending order
+        cluster_sizes = [len(predicted_ood_data[cluster_preds == cluster_id]) for cluster_id in unique_clusters]
+        sorted_cluster_ids = np.array(unique_clusters)[np.argsort(cluster_sizes)[::-1]]
+        if max(cluster_sizes) < configs["size_threshold"]:
+            print(f"DBSCAN with eps={round(eps, 2)} resulted in clusters with max size {max(cluster_sizes)}")
+            continue
+
+        for cluster_id in sorted_cluster_ids:
             cluster_mask = cluster_preds == cluster_id
             cluster_points = predicted_ood_data[cluster_mask]
 
