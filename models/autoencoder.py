@@ -12,6 +12,16 @@ from copy import deepcopy
 from .loss import TripletLoss
 
 
+class DummyAutoencoder(nn.Module):
+    def __init__(self):
+        super(DummyAutoencoder, self).__init__()
+
+    def forward(self, x):
+        return x
+    
+    def embed(self, x: np.ndarray) -> np.ndarray:
+        return x
+
 
 class Autoencoder(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, latent_dim):
@@ -283,7 +293,7 @@ def train_autoencoder(
         # print(f", Epoch took {t1 - t0:.2f} seconds")
 
         # Early stopping logic
-        val_loss_eps = 0.005
+        val_loss_eps = 0.01
         val_acc_eps = 0.01
         # if total_val_loss < best_val_loss and abs(total_val_loss - best_val_loss) > val_loss_eps:
         if (

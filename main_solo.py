@@ -14,7 +14,6 @@ from utils import set_seeds
 from log_tools import logger, save_results
 from configs import load_configs
 from models import OpenSetModel, train_autoencoder, identify_new_sources
-from models.autoencoder import DummyAutoencoder
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument(
@@ -43,18 +42,15 @@ if __name__ == "__main__":
     datasets = get_datasets(configs["data"])
 
     # Initialize GMMs and the AE, and the threshold
-    if configs["use_autoencoder"]:
-        initial_ae = train_autoencoder(
-            datasets["init_known"]["train"][0],
-            datasets["init_known"]["train"][1],
-            datasets["init_known"]["val"][0],
-            datasets["init_known"]["val"][1],
-            source_name="init_known",
-            log_dir=log_dir,
-            training_kwargs=configs["training_kwargs"],
-        )
-    else:
-        initial_ae = DummyAutoencoder()
+    initial_ae = train_autoencoder(
+        datasets["init_known"]["train"][0],
+        datasets["init_known"]["train"][1],
+        datasets["init_known"]["val"][0],
+        datasets["init_known"]["val"][1],
+        source_name="init_known",
+        log_dir=log_dir,
+        training_kwargs=configs["training_kwargs"],
+    )
     init_known_dataset = datasets["init_known"]["train"]
 
     open_set_model = OpenSetModel(
@@ -89,6 +85,7 @@ if __name__ == "__main__":
     # open_set_model.set_threshold(init_threshold)
 
     validation_set = {"initial": [init_known_dataset[0], init_known_dataset[1]]}
+    init_validation_set = deepcopy(validation_set)
     validation_results = open_set_model.evaluate(
         initial_ae.embed(validation_set["initial"][0]),
         validation_set["initial"][1],
@@ -143,67 +140,75 @@ if __name__ == "__main__":
 
     for i, emerging_label in enumerate(emerging_labels):
         emerging_source = configs["data"]["emerging_sources"][i]
+        # emerging_label = max(datasets["init_known"]["train"][1]) + 1
         print()
         print("=====================================================================")
-        print(f"Emerging Source: {emerging_source} with label {emerging_label}")
+        print(f"Emerging Source: {emerging_source} with label {max(datasets['init_known']['train'][1]) + 1}")
         print("=====================================================================")
         results_dict[emerging_source] = {}
         # input("Press Enter to continue...")
+        # resetting everything to the initial state
+        open_set_model = deepcopy(init_os_model)
+        current_ae = deepcopy(initial_ae)
+        validation_set = deepcopy(init_validation_set)
+        learned_X = []
+        learned_y = []
+        learned_X_val = []
+        learned_y_val = []
 
-        if not configs["do_nothing"]:
-            open_set_model, current_ae, learned_X, learned_y, identified_new_src, identified_new_src_labels, old_os_model, old_ae, results_dict = (
-                propose_an_update(
-                    emerging_source,
-                    emerging_label,
-                    X_emerging,
-                    y_emerging,
-                    learned_X,
-                    learned_X_val,
-                    learned_y,
-                    learned_y_val,
-                    open_set_model,
-                    current_ae,
-                    datasets,
-                    validation_set,
-                    results_dict,
-                    validation_results_dict,
-                    log_dir,
-                    configs,
-                )
+
+        open_set_model, current_ae, learned_X, learned_y, identified_new_src, identified_new_src_labels, old_os_model, old_ae, results_dict = (
+            propose_an_update(
+                emerging_source,
+                emerging_label,
+                X_emerging,
+                y_emerging,
+                learned_X,
+                learned_X_val,
+                learned_y,
+                learned_y_val,
+                open_set_model,
+                current_ae,
+                datasets,
+                validation_set,
+                results_dict,
+                validation_results_dict,
+                log_dir,
+                configs,
             )
-            
-            
-            # Evaluation and visualization
-            if identified_new_src is not None:
-                cm_before, cm_labels_before = old_os_model.get_cm_labels(
-                    old_ae.embed(identified_new_src),
-                    identified_new_src_labels,
-                    add_new_source=True,
-                )
-                cm_after, cm_labels_after = open_set_model.get_cm_labels(
-                    current_ae.embed(identified_new_src), identified_new_src_labels
-                )
-                plot_cm_cluster_before_after(
-                    cm_before,
-                    cm_labels_before,
-                    cm_after,
-                    cm_labels_after,
-                    emerging_source,
-                    emerging_label,
-                    log_dir,
-                )
+        )
+        
+        
+        # Evaluation and visualization
+        # cm_before, cm_labels_before = old_os_model.get_cm_labels(
+        #     old_ae.embed(identified_new_src),
+        #     identified_new_src_labels,
+        #     add_new_source=True,
+        # )
+        # cm_after, cm_labels_after = open_set_model.get_cm_labels(
+        #     current_ae.embed(identified_new_src), identified_new_src_labels
+        # )
+        # plot_cm_cluster_before_after(
+        #     cm_before,
+        #     cm_labels_before,
+        #     cm_after,
+        #     cm_labels_after,
+        #     emerging_source,
+        #     emerging_label,
+        #     log_dir,
+        # )
 
         y_emerging_test = datasets["emerging"]["test"][1]
         eval_datasets_X = np.concatenate(
             (
                 datasets["init_known"]["test"][0],
-                datasets["emerging"]["test"][0][y_emerging_test <= emerging_label],
+                datasets["emerging"]["test"][0][y_emerging_test == emerging_label],
             )
         )
         eval_datasets_y = np.concatenate(
             (
                 datasets["init_known"]["test"][1],
-                y_emerging_test[y_emerging_test <= emerging_label],
+                np.ones_like(y_emerging_test[y_emerging_test == emerging_label]) * open_set_model.n_known_sources - 1,
             )
         )
 

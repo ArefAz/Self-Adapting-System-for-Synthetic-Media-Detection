@@ -4,6 +4,7 @@ from models import (
     train_autoencoder,
     identify_new_sources_iter,
 )
+from models.autoencoder import DummyAutoencoder
 from .visualizaitons import *
 from copy import deepcopy
 from collections import Counter
@@ -32,8 +33,12 @@ def propose_an_update(
     configs,
 ):
 
-    emerging_buffer_X = X_emerging[y_emerging <= emerging_label]
-    emerging_buffer_y = y_emerging[y_emerging <= emerging_label]
+    if configs["is_solo"]:
+        emerging_buffer_X = X_emerging[y_emerging == emerging_label]
+        emerging_buffer_y = y_emerging[y_emerging == emerging_label]
+    else:
+        emerging_buffer_X = X_emerging[y_emerging <= emerging_label]
+        emerging_buffer_y = y_emerging[y_emerging <= emerging_label]
 
     emerging_buffer_X = np.concatenate(
         (
@@ -52,13 +57,21 @@ def propose_an_update(
         f"Number of unique samples in emerging buffer {np.unique(emerging_buffer_y, return_counts=True)}"
     )
 
-    ood_binary_labels = np.concatenate(
-        (
-            np.ones_like(y_emerging[y_emerging == emerging_label]),
-            np.zeros_like(y_emerging[y_emerging < emerging_label]),
-            np.zeros_like(datasets["init_known"]["learning"][1]),
+    if not configs["is_solo"]:
+        ood_binary_labels = np.concatenate(
+            (
+                np.ones_like(y_emerging[y_emerging == emerging_label]),
+                np.zeros_like(y_emerging[y_emerging < emerging_label]),
+                np.zeros_like(datasets["init_known"]["learning"][1]),
+            )
         )
-    )
+    else:
+        ood_binary_labels = np.concatenate(
+            (
+                np.ones_like(y_emerging[y_emerging == emerging_label]),
+                np.zeros_like(datasets["init_known"]["learning"][1]),
+            )
+        )
 
     ood_decisions = open_set_model.ood_detect(current_ae.embed(emerging_buffer_X))
     if ood_binary_labels.shape != ood_decisions.shape:
@@ -149,7 +162,7 @@ def propose_an_update(
 
             new_src_assigned_labels = np.ones_like(identified_new_src_labels) * open_set_model.n_known_sources
             new_X, new_X_val, new_y, new_y_val = train_test_split(
-                identified_new_src, new_src_assigned_labels, test_size=0.25, random_state=configs["random_seed"]
+                identified_new_src, new_src_assigned_labels, test_size=0.2, random_state=configs["random_seed"]
             )
             learned_X.extend(new_X)
             learned_y.extend(new_y)
@@ -205,29 +218,32 @@ def propose_an_update(
                 cluster_mask = y_ae == label
                 new_X_ae.extend(X_ae[cluster_mask][:min_class_count])
                 new_y_ae.extend(y_ae[cluster_mask][:min_class_count])
-            X_ae = np.array(new_X_ae)
-            y_ae = np.array(new_y_ae)
+            # X_ae = np.array(new_X_ae)
+            # y_ae = np.array(new_y_ae)
 
-            # class_counts_val = Counter(y_ae_val)
-            # min_class_count_val = min(class_counts_val.values())
-            # new_X_ae_val = []
-            # new_y_ae_val = []
-            # for label in np.unique(y_ae_val):
-            #     cluster_mask = y_ae_val == label
-            #     new_X_ae_val.extend(X_ae_val[cluster_mask][:min_class_count_val])
-            #     new_y_ae_val.extend(y_ae_val[cluster_mask][:min_class_count_val])
+            class_counts_val = Counter(y_ae_val)
+            min_class_count_val = min(class_counts_val.values())
+            new_X_ae_val = []
+            new_y_ae_val = []
+            for label in np.unique(y_ae_val):
+                cluster_mask = y_ae_val == label
+                new_X_ae_val.extend(X_ae_val[cluster_mask][:min_class_count_val])
+                new_y_ae_val.extend(y_ae_val[cluster_mask][:min_class_count_val])
             # X_ae_val = np.array(new_X_ae_val)
             # y_ae_val = np.array(new_y_ae_val)
 
-            tmp_ae = train_autoencoder(
-                X_ae,
-                y_ae,
-                X_ae_val,
-                y_ae_val,
-                source_name=emerging_source,
-                log_dir=log_dir,
-                training_kwargs=configs["training_kwargs"],
-            )
+            if configs["use_autoencoder"]:
+                tmp_ae = train_autoencoder(
+                    new_X_ae,
+                    new_y_ae,
+                    new_X_ae_val,
+                    new_y_ae_val,
+                    source_name=emerging_source,
+                    log_dir=log_dir,
+                    training_kwargs=configs["training_kwargs"],
+                )
+            else:
+                tmp_ae = DummyAutoencoder()
 
             tmp_open_set_model = OpenSetModel(
                 n_components=configs["training_kwargs"]["n_components"],
@@ -264,7 +280,7 @@ def propose_an_update(
             delta = prev_acc - acc
             delta_det = prev_det_acc - current_det_acc
             print(f"Validation results for selected cluster {cluster_id}: {validation_results}")
-            if (delta <= 0.10 and delta_det <= 0.10) or (delta <= 0.15 and delta_det <= 0.15 and current_acc > 0.70):
+            if (delta <= 0.10 and delta_det <= 0.10 and current_acc >= 0.65) or (delta <= 0.15 and delta_det <= 0.15 and current_acc > 0.70):
                 print(f"Validation results for selected cluster {cluster_id} are GOOD enough, UPDATING the model")
                 validation_results_dict["prev"] = validation_results
                 open_set_model = tmp_open_set_model
@@ -286,7 +302,19 @@ def propose_an_update(
 
 
     if not found_good_cluster:
-        raise ValueError("No good cluster found")
+        # raise ValueError("No good cluster found")
+        print("No good cluster found")
+        return (
+            open_set_model,
+            current_ae,
+            learned_X,
+            learned_y,
+            None,
+            None,
+            open_set_model,
+            current_ae,
+            results_dict,
+        )
 
     # Plotting
     plot_clustering_results(
@@ -300,8 +328,8 @@ def propose_an_update(
         log_dir,
     )
     plot_tsne_before_after_ae(
-        X_ae,
-        y_ae,
+        np.array(new_X_ae),
+        np.array(new_y_ae),
         X_ae_test,
         y_ae_test,
         current_ae,
@@ -309,23 +337,24 @@ def propose_an_update(
         emerging_label,
         log_dir,
     )
-    cm_before, cm_labels_before = old_os_model.get_cm_labels(
-        old_ae.embed(identified_new_src),
-        identified_new_src_labels,
-        add_new_source=True,
-    )
-    cm_after, cm_labels_after = open_set_model.get_cm_labels(
-        current_ae.embed(identified_new_src), identified_new_src_labels
-    )
-    plot_cm_cluster_before_after(
-        cm_before,
-        cm_labels_before,
-        cm_after,
-        cm_labels_after,
-        emerging_source,
-        emerging_label,
-        log_dir,
-    )
+    if not configs["is_solo"]:
+        cm_before, cm_labels_before = old_os_model.get_cm_labels(
+            old_ae.embed(identified_new_src),
+            identified_new_src_labels,
+            add_new_source=True,
+        )
+        cm_after, cm_labels_after = open_set_model.get_cm_labels(
+            current_ae.embed(identified_new_src), identified_new_src_labels
+        )
+        plot_cm_cluster_before_after(
+            cm_before,
+            cm_labels_before,
+            cm_after,
+            cm_labels_after,
+            emerging_source,
+            emerging_label,
+            log_dir,
+        )
 
     return (
         open_set_model,

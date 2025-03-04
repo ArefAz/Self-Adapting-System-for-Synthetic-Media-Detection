@@ -1,4 +1,4 @@
-base_log_dir: "logs"
+base_log_dir: "logs_solo"
 
 data:
   dataset_path: "datasets/fsd"
@@ -8,13 +8,13 @@ data:
     - "stylegan2-2000"  # 2
     - "stylegan-2000"  # 1
   emerging_sources:
-    - "progan"  # 4
-    - "dalle3"  # 5
-    - "mjv6"  # 6
-    - "firefly"  # 7
-    - "sd14"  # 8
-    - "sd15"  # 9
-    - "sd3"  # 10
+    # - "progan"  # 4
+    # - "dalle3"  # 5
+    # - "mjv6"  # 6
+    # - "firefly"  # 7
+    # - "sd14"  # 8
+    # - "sd15"  # 9
+    # - "sd3"  # 10
     - "sdxl" # 11
   ood_sources:
     - "tam_trans" # 9
@@ -34,7 +34,7 @@ training_kwargs:
   top_k: 64
   device: "cuda"
   n_components: 5
-  cov_type: "full"
+  cov_type: "spherical"
   is_bayesian: true
   cluster_min_samples: 7
 
@@ -46,6 +46,7 @@ size_adaptive_coeff: 1.1
 random_seed: 42
 use_autoencoder: true
 do_nothing: false
+is_solo: false
 do_retrain: false
 refine_factor: 1.0
 max_ood_fpr: 0.05

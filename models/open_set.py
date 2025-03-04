@@ -93,11 +93,16 @@ class OpenSetModel:
             labels_range = np.arange(-1, self.n_known_sources + 1)
         else:
             labels_range = np.arange(-1, self.n_known_sources)
+        # print(f"Labels range: {labels_range}")
+        # print(f"Unique labels: {np.unique(y)}, {np.unique(preds)}")
+        # raise ValueError("Stop here")
         cm = confusion_matrix(y, preds, labels=labels_range)
         return cm, labels_range
 
     def evaluate(self, X, y):
         preds = self.classify(X)
+        # print(f"Unique labels: {np.unique(y, return_counts=True)}")
+        # print(f"Unique preds: {np.unique(preds, return_counts=True)}")
         cm = confusion_matrix(y, preds, labels=np.arange(-1, self.n_known_sources))
         b_acc = round(balanced_accuracy_score(y, preds), 4)
 

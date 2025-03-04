@@ -210,16 +210,6 @@ def combine_splits_to_xy(splits):
     
     return combined
 
-# Example usage:
-# Suppose `splits` is the output from your previous splitting function.
-# combined_dict = combine_splits_to_xy(splits)
-# For a given split_id:
-# X_subset, y_subset = combined_dict[split_id]
-
-
-# Example usage:
-# Assume you have your data in (X, y) format.
-# For demonstration, we create dummy data: 10 classes with 1000 samples each.
 if __name__ == "__main__":
     X = np.concatenate([np.arange(1000).reshape(-1, 1) + i*1000 for i in range(10)])
     y = np.concatenate([[i]*1000 for i in range(10)])
