@@ -129,16 +129,24 @@ class OpenSetModel:
     
     def evaluate_ood(self, ood_decisions, ood_labels):
         cm = confusion_matrix(ood_labels, ood_decisions)
-        tn, fp, fn, tp = cm.ravel()
-        tpr = tp / (tp + fn)
-        fpr = fp / (fp + tn)
-        acc = (tp + tn) / (tp + tn + fp + fn)
-        results = {
-            "ood_cm": cm,
-            "ood_tpr": round(tpr, 4),
-            "ood_fpr": round(fpr, 4),
-            "ood_acc": round(acc, 4),
-        }
+        try:
+            tn, fp, fn, tp = cm.ravel()
+            tpr = tp / (tp + fn)
+            fpr = fp / (fp + tn)
+            acc = (tp + tn) / (tp + tn + fp + fn)
+            results = {
+                "ood_cm": cm,
+                "ood_tpr": round(tpr, 4),
+                "ood_fpr": round(fpr, 4),
+                "ood_acc": round(acc, 4),
+            }
+        except ValueError:
+            results = {
+                "ood_cm": cm,
+                "ood_tpr": 0.0,
+                "ood_fpr": 0.0,
+                "ood_acc": 0.0,
+            }
         return results
         
 

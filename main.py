@@ -105,7 +105,16 @@ if __name__ == "__main__":
     for key, value in eval_results.items():
         if key == "confusion_matrix":
             continue
-        results_dict["initial"][key] = value
+    results_dict["initial"][key] = value
+
+    logger.save_state(
+        open_set_model,
+        initial_ae,
+        results_dict,
+        "initial",
+        "0",
+        log_dir,
+    )
 
     save_results(results_dict, log_dir)
 

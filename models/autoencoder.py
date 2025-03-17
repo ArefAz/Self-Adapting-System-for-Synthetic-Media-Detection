@@ -63,6 +63,8 @@ def train_autoencoder(
     max_known_label=None,
     initial_n_known=None,
     training_kwargs=None,
+    do_early_stopping=True,
+    use_scheduler=True,
 ):
     """
     Trains an autoencoder using in-memory datasets with weighted loss terms.
@@ -271,7 +273,8 @@ def train_autoencoder(
         total_train_loss /= num_train_batches
 
         # Adjust learning rate if validation loss plateaus
-        scheduler.step(total_val_loss)
+        if use_scheduler:
+            scheduler.step(total_val_loss)
         # Log losses to TensorBoard
         writer.add_scalar("Loss/Train_Recon", train_recon_loss, epoch)
         writer.add_scalar("Loss/Train_Discriminative", train_disc_loss, epoch)
@@ -296,30 +299,31 @@ def train_autoencoder(
         val_loss_eps = 0.01
         val_acc_eps = 0.01
         # if total_val_loss < best_val_loss and abs(total_val_loss - best_val_loss) > val_loss_eps:
-        if (
-            total_val_loss < best_val_loss
-            and abs(total_val_loss - best_val_loss) > val_loss_eps
-        ):
-            # if accuracy > best_accuracy and abs(accuracy - best_accuracy) > val_acc_eps:
-            # best_val_loss = disc_val_loss
-            best_val_loss = total_val_loss
-            best_accuracy = accuracy
-            best_detected_accuracy = acc_synthetic
-            best_epoch = epoch
-            early_stop_counter = 0  # Reset counter
-            best_model = deepcopy(model)
-        else:
-            early_stop_counter += 1
+        if do_early_stopping:
+            if (
+                total_val_loss < best_val_loss
+                and abs(total_val_loss - best_val_loss) > val_loss_eps
+            ):
+                # if accuracy > best_accuracy and abs(accuracy - best_accuracy) > val_acc_eps:
+                # best_val_loss = disc_val_loss
+                best_val_loss = total_val_loss
+                best_accuracy = accuracy
+                best_detected_accuracy = acc_synthetic
+                best_epoch = epoch
+                early_stop_counter = 0  # Reset counter
+                best_model = deepcopy(model)
+            else:
+                early_stop_counter += 1
 
-        if early_stop_counter >= es_patience:
-            print(
-                f"Early stopping triggered after {epoch+1} epochs at epoch {best_epoch+1} ",
-                end="",
-            )
-            print(
-                f"with validation loss: {best_val_loss:.4f} and accuracy: {best_accuracy:.4f}, detection accuracy: {best_detected_accuracy:.4f}"
-            )
-            return best_model.eval().cpu()
+            if early_stop_counter >= es_patience:
+                print(
+                    f"Early stopping triggered after {epoch+1} epochs at epoch {best_epoch+1} ",
+                    end="",
+                )
+                print(
+                    f"with validation loss: {best_val_loss:.4f} and accuracy: {best_accuracy:.4f}, detection accuracy: {best_detected_accuracy:.4f}"
+                )
+                return best_model.eval().cpu()
 
     # Close TensorBoard writer
     writer.close()

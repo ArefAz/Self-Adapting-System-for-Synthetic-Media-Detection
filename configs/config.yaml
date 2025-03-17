@@ -1,29 +1,42 @@
-base_log_dir: "logs_solo"
+base_log_dir: "ablation_logs"
 
 data:
   dataset_path: "datasets/fsd"
   init_sources:
     - "real-in1k-2000"  # 0
-    - "stylegan3-2000"  # 3
-    - "stylegan2-2000"  # 2
     - "stylegan-2000"  # 1
+    - "stylegan2-2000"  # 2
+    - "stylegan3-2000"  # 3
   emerging_sources:
-    # - "progan"  # 4
-    # - "dalle3"  # 5
-    # - "mjv6"  # 6
-    # - "firefly"  # 7
-    # - "sd14"  # 8
-    # - "sd15"  # 9
-    # - "sd3"  # 10
-    - "sdxl" # 11
+    - "progan"  # 4
+    - "dalle3"  # 5
+    - "mjv6"  # 6
+    - "firefly"  # 7
+    - "sd14"  # 8
+    - "sd15"  # 8
+    - "sd3"  # 9
+    # - "sdxl" # 13
+    # - "eg3d"  # 10
+    # - "sd2"  # 11
+    # - "mjv5" # 12
   ood_sources:
+    # - "mjv6"  # 6
+    # - "sdxl" # 11
+    # - "sd15"  # 9
+    # - "sd14"  # 9
+    # - "stylegan3-2000"  # 1
+    # - "progan"  # 4
+    # - "firefly"  # 7
+    # - "sd3"  # 10
+    # - "sdxl" # 11
+    # - "sd14"  # 8
     - "tam_trans" # 9
   test_size: 0.2
   seed: 42
 
 training_kwargs:
   num_epochs: 50
-  alpha: 1.0
+  alpha: 0.0
   beta: 1.0
   batch_size: 256
   lr: 1e-4
